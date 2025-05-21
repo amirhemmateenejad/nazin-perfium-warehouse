@@ -2,19 +2,21 @@
 
 namespace Illuminate\Database\Eloquent\Concerns;
 
+use Illuminate\Support\Str;
+
 trait GuardsAttributes
 {
     /**
      * The attributes that are mass assignable.
      *
-     * @var array<int, string>
+     * @var array
      */
     protected $fillable = [];
 
     /**
      * The attributes that aren't mass assignable.
      *
-     * @var array<string>|bool
+     * @var array
      */
     protected $guarded = ['*'];
 
@@ -26,16 +28,9 @@ trait GuardsAttributes
     protected static $unguarded = false;
 
     /**
-     * The actual columns that exist on the database and can be guarded.
-     *
-     * @var array<string>
-     */
-    protected static $guardableColumns = [];
-
-    /**
      * Get the fillable attributes for the model.
      *
-     * @return array<string>
+     * @return array
      */
     public function getFillable()
     {
@@ -45,7 +40,7 @@ trait GuardsAttributes
     /**
      * Set the fillable attributes for the model.
      *
-     * @param  array<string>  $fillable
+     * @param  array  $fillable
      * @return $this
      */
     public function fillable(array $fillable)
@@ -58,12 +53,12 @@ trait GuardsAttributes
     /**
      * Merge new fillable attributes with existing fillable attributes on the model.
      *
-     * @param  array<string>  $fillable
+     * @param  array  $fillable
      * @return $this
      */
     public function mergeFillable(array $fillable)
     {
-        $this->fillable = array_values(array_unique(array_merge($this->fillable, $fillable)));
+        $this->fillable = array_merge($this->fillable, $fillable);
 
         return $this;
     }
@@ -71,19 +66,17 @@ trait GuardsAttributes
     /**
      * Get the guarded attributes for the model.
      *
-     * @return array<string>
+     * @return array
      */
     public function getGuarded()
     {
-        return $this->guarded === false
-                    ? []
-                    : $this->guarded;
+        return $this->guarded;
     }
 
     /**
      * Set the guarded attributes for the model.
      *
-     * @param  array<string>  $guarded
+     * @param  array  $guarded
      * @return $this
      */
     public function guard(array $guarded)
@@ -96,12 +89,12 @@ trait GuardsAttributes
     /**
      * Merge new guarded attributes with existing guarded attributes on the model.
      *
-     * @param  array<string>  $guarded
+     * @param  array  $guarded
      * @return $this
      */
     public function mergeGuarded(array $guarded)
     {
-        $this->guarded = array_values(array_unique(array_merge($this->guarded, $guarded)));
+        $this->guarded = array_merge($this->guarded, $guarded);
 
         return $this;
     }
@@ -128,7 +121,7 @@ trait GuardsAttributes
     }
 
     /**
-     * Determine if the current state is "unguarded".
+     * Determine if current state is "unguarded".
      *
      * @return bool
      */
@@ -185,8 +178,7 @@ trait GuardsAttributes
         }
 
         return empty($this->getFillable()) &&
-            ! str_contains($key, '.') &&
-            ! str_starts_with($key, '_');
+            ! Str::startsWith($key, '_');
     }
 
     /**
@@ -197,40 +189,7 @@ trait GuardsAttributes
      */
     public function isGuarded($key)
     {
-        if (empty($this->getGuarded())) {
-            return false;
-        }
-
-        return $this->getGuarded() == ['*'] ||
-               ! empty(preg_grep('/^'.preg_quote($key, '/').'$/i', $this->getGuarded())) ||
-               ! $this->isGuardableColumn($key);
-    }
-
-    /**
-     * Determine if the given column is a valid, guardable column.
-     *
-     * @param  string  $key
-     * @return bool
-     */
-    protected function isGuardableColumn($key)
-    {
-        if ($this->hasSetMutator($key) || $this->hasAttributeSetMutator($key)) {
-            return true;
-        }
-
-        if (! isset(static::$guardableColumns[get_class($this)])) {
-            $columns = $this->getConnection()
-                        ->getSchemaBuilder()
-                        ->getColumnListing($this->getTable());
-
-            if (empty($columns)) {
-                return true;
-            }
-
-            static::$guardableColumns[get_class($this)] = $columns;
-        }
-
-        return in_array($key, static::$guardableColumns[get_class($this)]);
+        return in_array($key, $this->getGuarded()) || $this->getGuarded() == ['*'];
     }
 
     /**

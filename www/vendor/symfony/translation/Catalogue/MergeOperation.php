@@ -24,7 +24,10 @@ use Symfony\Component\Translation\MessageCatalogueInterface;
  */
 class MergeOperation extends AbstractOperation
 {
-    protected function processDomain(string $domain): void
+    /**
+     * {@inheritdoc}
+     */
+    protected function processDomain(string $domain)
     {
         $this->messages[$domain] = [
             'all' => [],
@@ -33,24 +36,11 @@ class MergeOperation extends AbstractOperation
         ];
         $intlDomain = $domain.MessageCatalogueInterface::INTL_DOMAIN_SUFFIX;
 
-        foreach ($this->target->getCatalogueMetadata('', $domain) ?? [] as $key => $value) {
-            if (null === $this->result->getCatalogueMetadata($key, $domain)) {
-                $this->result->setCatalogueMetadata($key, $value, $domain);
-            }
-        }
-
-        foreach ($this->target->getCatalogueMetadata('', $intlDomain) ?? [] as $key => $value) {
-            if (null === $this->result->getCatalogueMetadata($key, $intlDomain)) {
-                $this->result->setCatalogueMetadata($key, $value, $intlDomain);
-            }
-        }
-
         foreach ($this->source->all($domain) as $id => $message) {
             $this->messages[$domain]['all'][$id] = $message;
-            $d = $this->source->defines($id, $intlDomain) ? $intlDomain : $domain;
-            $this->result->add([$id => $message], $d);
-            if (null !== $keyMetadata = $this->source->getMetadata($id, $d)) {
-                $this->result->setMetadata($id, $keyMetadata, $d);
+            $this->result->add([$id => $message], $this->source->defines($id, $intlDomain) ? $intlDomain : $domain);
+            if (null !== $keyMetadata = $this->source->getMetadata($id, $domain)) {
+                $this->result->setMetadata($id, $keyMetadata, $domain);
             }
         }
 
@@ -58,10 +48,9 @@ class MergeOperation extends AbstractOperation
             if (!$this->source->has($id, $domain)) {
                 $this->messages[$domain]['all'][$id] = $message;
                 $this->messages[$domain]['new'][$id] = $message;
-                $d = $this->target->defines($id, $intlDomain) ? $intlDomain : $domain;
-                $this->result->add([$id => $message], $d);
-                if (null !== $keyMetadata = $this->target->getMetadata($id, $d)) {
-                    $this->result->setMetadata($id, $keyMetadata, $d);
+                $this->result->add([$id => $message], $this->target->defines($id, $intlDomain) ? $intlDomain : $domain);
+                if (null !== $keyMetadata = $this->target->getMetadata($id, $domain)) {
+                    $this->result->setMetadata($id, $keyMetadata, $domain);
                 }
             }
         }

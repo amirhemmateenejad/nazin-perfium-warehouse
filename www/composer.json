@@ -1,8 +1,0 @@
-{
-    "require": {
-        "mikecao/flight": "^3.13",
-        "illuminate/database": "^11.36",
-        "robmorgan/phinx": "^0.16.5",
-        "vlucas/phpdotenv": "^5.6"
-    }
-}

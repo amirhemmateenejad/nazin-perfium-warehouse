@@ -12,20 +12,12 @@ interface MigrationRepositoryInterface
     public function getRan();
 
     /**
-     * Get the list of migrations.
+     * Get list of migrations.
      *
      * @param  int  $steps
      * @return array
      */
     public function getMigrations($steps);
-
-    /**
-     * Get the list of the migrations by batch.
-     *
-     * @param  int  $batch
-     * @return array
-     */
-    public function getMigrationsByBatch($batch);
 
     /**
      * Get the last migration batch.
@@ -78,13 +70,6 @@ interface MigrationRepositoryInterface
      * @return bool
      */
     public function repositoryExists();
-
-    /**
-     * Delete the migration repository data store.
-     *
-     * @return void
-     */
-    public function deleteRepository();
 
     /**
      * Set the information source to gather data.

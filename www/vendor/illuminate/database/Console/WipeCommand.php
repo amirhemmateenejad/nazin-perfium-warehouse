@@ -4,14 +4,11 @@ namespace Illuminate\Database\Console;
 
 use Illuminate\Console\Command;
 use Illuminate\Console\ConfirmableTrait;
-use Illuminate\Console\Prohibitable;
-use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputOption;
 
-#[AsCommand(name: 'db:wipe')]
 class WipeCommand extends Command
 {
-    use ConfirmableTrait, Prohibitable;
+    use ConfirmableTrait;
 
     /**
      * The console command name.
@@ -34,9 +31,8 @@ class WipeCommand extends Command
      */
     public function handle()
     {
-        if ($this->isProhibited() ||
-            ! $this->confirmToProceed()) {
-            return Command::FAILURE;
+        if (! $this->confirmToProceed()) {
+            return 1;
         }
 
         $database = $this->input->getOption('database');
@@ -44,17 +40,17 @@ class WipeCommand extends Command
         if ($this->option('drop-views')) {
             $this->dropAllViews($database);
 
-            $this->components->info('Dropped all views successfully.');
+            $this->info('Dropped all views successfully.');
         }
 
         $this->dropAllTables($database);
 
-        $this->components->info('Dropped all tables successfully.');
+        $this->info('Dropped all tables successfully.');
 
         if ($this->option('drop-types')) {
             $this->dropAllTypes($database);
 
-            $this->components->info('Dropped all types successfully.');
+            $this->info('Dropped all types successfully.');
         }
 
         return 0;

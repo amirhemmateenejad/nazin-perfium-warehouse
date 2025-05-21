@@ -2,10 +2,6 @@
 
 namespace Illuminate\Database\Migrations;
 
-use Illuminate\Console\View\Components\BulletList;
-use Illuminate\Console\View\Components\Info;
-use Illuminate\Console\View\Components\Task;
-use Illuminate\Console\View\Components\TwoColumnDetail;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\ConnectionResolverInterface as Resolver;
 use Illuminate\Database\Events\MigrationEnded;
@@ -17,7 +13,6 @@ use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
-use ReflectionClass;
 use Symfony\Component\Console\Output\OutputInterface;
 
 class Migrator
@@ -60,16 +55,9 @@ class Migrator
     /**
      * The paths to all of the migration files.
      *
-     * @var string[]
+     * @var array
      */
     protected $paths = [];
-
-    /**
-     * The paths that have already been required.
-     *
-     * @var array<string, \Illuminate\Database\Migrations\Migration|null>
-     */
-    protected static $requiredPathCache = [];
 
     /**
      * The output interface implementation.
@@ -87,12 +75,11 @@ class Migrator
      * @param  \Illuminate\Contracts\Events\Dispatcher|null  $dispatcher
      * @return void
      */
-    public function __construct(
-        MigrationRepositoryInterface $repository,
-        Resolver $resolver,
-        Filesystem $files,
-        ?Dispatcher $dispatcher = null,
-    ) {
+    public function __construct(MigrationRepositoryInterface $repository,
+                                Resolver $resolver,
+                                Filesystem $files,
+                                Dispatcher $dispatcher = null)
+    {
         $this->files = $files;
         $this->events = $dispatcher;
         $this->resolver = $resolver;
@@ -102,9 +89,9 @@ class Migrator
     /**
      * Run the pending migrations at a given path.
      *
-     * @param  string[]|string  $paths
-     * @param  array<string, mixed>  $options
-     * @return string[]
+     * @param  array|string  $paths
+     * @param  array  $options
+     * @return array
      */
     public function run($paths = [], array $options = [])
     {
@@ -128,23 +115,23 @@ class Migrator
     /**
      * Get the migration files that have not yet run.
      *
-     * @param  string[]  $files
-     * @param  string[]  $ran
-     * @return string[]
+     * @param  array  $files
+     * @param  array  $ran
+     * @return array
      */
     protected function pendingMigrations($files, $ran)
     {
-        return (new Collection($files))
-            ->reject(fn ($file) => in_array($this->getMigrationName($file), $ran))
-            ->values()
-            ->all();
+        return Collection::make($files)
+                ->reject(function ($file) use ($ran) {
+                    return in_array($this->getMigrationName($file), $ran);
+                })->values()->all();
     }
 
     /**
      * Run an array of migrations.
      *
-     * @param  string[]  $migrations
-     * @param  array<string, mixed>  $options
+     * @param  array  $migrations
+     * @param  array  $options
      * @return void
      */
     public function runPending(array $migrations, array $options = [])
@@ -155,7 +142,7 @@ class Migrator
         if (count($migrations) === 0) {
             $this->fireMigrationEvent(new NoPendingMigrations('up'));
 
-            $this->write(Info::class, 'Nothing to migrate');
+            $this->note('<info>Nothing to migrate.</info>');
 
             return;
         }
@@ -169,9 +156,7 @@ class Migrator
 
         $step = $options['step'] ?? false;
 
-        $this->fireMigrationEvent(new MigrationsStarted('up'));
-
-        $this->write(Info::class, 'Running migrations.');
+        $this->fireMigrationEvent(new MigrationsStarted);
 
         // Once we have the array of migrations, we will spin through them and run the
         // migrations "up" so the changes are made to the databases. We'll then log
@@ -184,9 +169,7 @@ class Migrator
             }
         }
 
-        $this->fireMigrationEvent(new MigrationsEnded('up'));
-
-        $this->output?->writeln('');
+        $this->fireMigrationEvent(new MigrationsEnded);
     }
 
     /**
@@ -202,28 +185,36 @@ class Migrator
         // First we will resolve a "real" instance of the migration class from this
         // migration file name. Once we have the instances we can run the actual
         // command such as "up" or "down", or we can just simulate the action.
-        $migration = $this->resolvePath($file);
-
-        $name = $this->getMigrationName($file);
+        $migration = $this->resolve(
+            $name = $this->getMigrationName($file)
+        );
 
         if ($pretend) {
             return $this->pretendToRun($migration, 'up');
         }
 
-        $this->write(Task::class, $name, fn () => $this->runMigration($migration, 'up'));
+        $this->note("<comment>Migrating:</comment> {$name}");
+
+        $startTime = microtime(true);
+
+        $this->runMigration($migration, 'up');
+
+        $runTime = round(microtime(true) - $startTime, 2);
 
         // Once we have run a migrations class, we will log that it was run in this
         // repository so that we don't try to run it next time we do a migration
         // in the application. A migration repository keeps the migrate order.
         $this->repository->log($name, $batch);
+
+        $this->note("<info>Migrated:</info>  {$name} ({$runTime} seconds)");
     }
 
     /**
      * Rollback the last migration operation.
      *
-     * @param  string[]|string  $paths
-     * @param  array<string, mixed>  $options
-     * @return string[]
+     * @param  array|string  $paths
+     * @param  array  $options
+     * @return array
      */
     public function rollback($paths = [], array $options = [])
     {
@@ -235,30 +226,24 @@ class Migrator
         if (count($migrations) === 0) {
             $this->fireMigrationEvent(new NoPendingMigrations('down'));
 
-            $this->write(Info::class, 'Nothing to rollback.');
+            $this->note('<info>Nothing to rollback.</info>');
 
             return [];
         }
 
-        return tap($this->rollbackMigrations($migrations, $paths, $options), function () {
-            $this->output?->writeln('');
-        });
+        return $this->rollbackMigrations($migrations, $paths, $options);
     }
 
     /**
      * Get the migrations for a rollback operation.
      *
-     * @param  array<string, mixed>  $options
+     * @param  array  $options
      * @return array
      */
     protected function getMigrationsForRollback(array $options)
     {
         if (($steps = $options['step'] ?? 0) > 0) {
             return $this->repository->getMigrations($steps);
-        }
-
-        if (($batch = $options['batch'] ?? 0) > 0) {
-            return $this->repository->getMigrationsByBatch($batch);
         }
 
         return $this->repository->getLast();
@@ -268,9 +253,9 @@ class Migrator
      * Rollback the given migrations.
      *
      * @param  array  $migrations
-     * @param  string[]|string  $paths
-     * @param  array<string, mixed>  $options
-     * @return string[]
+     * @param  array|string  $paths
+     * @param  array  $options
+     * @return array
      */
     protected function rollbackMigrations(array $migrations, $paths, array $options)
     {
@@ -278,9 +263,7 @@ class Migrator
 
         $this->requireFiles($files = $this->getMigrationFiles($paths));
 
-        $this->fireMigrationEvent(new MigrationsStarted('down'));
-
-        $this->write(Info::class, 'Rolling back migrations.');
+        $this->fireMigrationEvent(new MigrationsStarted);
 
         // Next we will run through all of the migrations and call the "down" method
         // which will reverse each migration in order. This getLast method on the
@@ -289,7 +272,7 @@ class Migrator
             $migration = (object) $migration;
 
             if (! $file = Arr::get($files, $migration->migration)) {
-                $this->write(TwoColumnDetail::class, $migration->migration, '<fg=yellow;options=bold>Migration not found</>');
+                $this->note("<fg=red>Migration not found:</> {$migration->migration}");
 
                 continue;
             }
@@ -302,7 +285,7 @@ class Migrator
             );
         }
 
-        $this->fireMigrationEvent(new MigrationsEnded('down'));
+        $this->fireMigrationEvent(new MigrationsEnded);
 
         return $rolledBack;
     }
@@ -310,7 +293,7 @@ class Migrator
     /**
      * Rolls all of the currently applied migrations back.
      *
-     * @param  string[]|string  $paths
+     * @param  array|string  $paths
      * @param  bool  $pretend
      * @return array
      */
@@ -322,21 +305,19 @@ class Migrator
         $migrations = array_reverse($this->repository->getRan());
 
         if (count($migrations) === 0) {
-            $this->write(Info::class, 'Nothing to rollback.');
+            $this->note('<info>Nothing to rollback.</info>');
 
             return [];
         }
 
-        return tap($this->resetMigrations($migrations, Arr::wrap($paths), $pretend), function () {
-            $this->output?->writeln('');
-        });
+        return $this->resetMigrations($migrations, $paths, $pretend);
     }
 
     /**
      * Reset the given migrations.
      *
-     * @param  string[]  $migrations
-     * @param  string[]  $paths
+     * @param  array  $migrations
+     * @param  array  $paths
      * @param  bool  $pretend
      * @return array
      */
@@ -345,7 +326,9 @@ class Migrator
         // Since the getRan method that retrieves the migration name just gives us the
         // migration name, we will format the names into objects with the name as a
         // property on the objects so that we can pass it to the rollback method.
-        $migrations = (new Collection($migrations))->map(fn ($m) => (object) ['migration' => $m])->all();
+        $migrations = collect($migrations)->map(function ($m) {
+            return (object) ['migration' => $m];
+        })->all();
 
         return $this->rollbackMigrations(
             $migrations, $paths, compact('pretend')
@@ -365,20 +348,28 @@ class Migrator
         // First we will get the file name of the migration so we can resolve out an
         // instance of the migration. Once we get an instance we can either run a
         // pretend execution of the migration or we can run the real migration.
-        $instance = $this->resolvePath($file);
+        $instance = $this->resolve(
+            $name = $this->getMigrationName($file)
+        );
 
-        $name = $this->getMigrationName($file);
+        $this->note("<comment>Rolling back:</comment> {$name}");
 
         if ($pretend) {
             return $this->pretendToRun($instance, 'down');
         }
 
-        $this->write(Task::class, $name, fn () => $this->runMigration($instance, 'down'));
+        $startTime = microtime(true);
+
+        $this->runMigration($instance, 'down');
+
+        $runTime = round(microtime(true) - $startTime, 2);
 
         // Once we have successfully run the migration "down" we will remove it from
         // the migration repository so it will be considered to have not been run
         // by the application then will be able to fire by any later operation.
         $this->repository->delete($migration);
+
+        $this->note("<info>Rolled back:</info>  {$name} ({$runTime} seconds)");
     }
 
     /**
@@ -394,11 +385,11 @@ class Migrator
             $migration->getConnection()
         );
 
-        $callback = function () use ($connection, $migration, $method) {
+        $callback = function () use ($migration, $method) {
             if (method_exists($migration, $method)) {
                 $this->fireMigrationEvent(new MigrationStarted($migration, $method));
 
-                $this->runMethod($connection, $migration, $method);
+                $migration->{$method}();
 
                 $this->fireMigrationEvent(new MigrationEnded($migration, $method));
             }
@@ -419,20 +410,11 @@ class Migrator
      */
     protected function pretendToRun($migration, $method)
     {
-        $name = get_class($migration);
+        foreach ($this->getQueries($migration, $method) as $query) {
+            $name = get_class($migration);
 
-        $reflectionClass = new ReflectionClass($migration);
-
-        if ($reflectionClass->isAnonymous()) {
-            $name = $this->getMigrationName($reflectionClass->getFileName());
+            $this->note("<info>{$name}:</info> {$query['query']}");
         }
-
-        $this->write(TwoColumnDetail::class, $name);
-
-        $this->write(
-            BulletList::class,
-            (new Collection($this->getQueries($migration, $method)))->map(fn ($query) => $query['query'])
-        );
     }
 
     /**
@@ -451,32 +433,11 @@ class Migrator
             $migration->getConnection()
         );
 
-        return $db->pretend(function () use ($db, $migration, $method) {
+        return $db->pretend(function () use ($migration, $method) {
             if (method_exists($migration, $method)) {
-                $this->runMethod($db, $migration, $method);
+                $migration->{$method}();
             }
         });
-    }
-
-    /**
-     * Run a migration method on the given connection.
-     *
-     * @param  \Illuminate\Database\Connection  $connection
-     * @param  object  $migration
-     * @param  string  $method
-     * @return void
-     */
-    protected function runMethod($connection, $migration, $method)
-    {
-        $previousConnection = $this->resolver->getDefaultConnection();
-
-        try {
-            $this->resolver->setDefaultConnection($connection->getName());
-
-            $migration->{$method}();
-        } finally {
-            $this->resolver->setDefaultConnection($previousConnection);
-        }
     }
 
     /**
@@ -487,68 +448,32 @@ class Migrator
      */
     public function resolve($file)
     {
-        $class = $this->getMigrationClass($file);
+        $class = Str::studly(implode('_', array_slice(explode('_', $file), 4)));
 
         return new $class;
-    }
-
-    /**
-     * Resolve a migration instance from a migration path.
-     *
-     * @param  string  $path
-     * @return object
-     */
-    protected function resolvePath(string $path)
-    {
-        $class = $this->getMigrationClass($this->getMigrationName($path));
-
-        if (class_exists($class) && realpath($path) == (new ReflectionClass($class))->getFileName()) {
-            return new $class;
-        }
-
-        $migration = static::$requiredPathCache[$path] ??= $this->files->getRequire($path);
-
-        if (is_object($migration)) {
-            return method_exists($migration, '__construct')
-                    ? $this->files->getRequire($path)
-                    : clone $migration;
-        }
-
-        return new $class;
-    }
-
-    /**
-     * Generate a migration class name based on the migration file name.
-     *
-     * @param  string  $migrationName
-     * @return string
-     */
-    protected function getMigrationClass(string $migrationName): string
-    {
-        return Str::studly(implode('_', array_slice(explode('_', $migrationName), 4)));
     }
 
     /**
      * Get all of the migration files in a given path.
      *
      * @param  string|array  $paths
-     * @return array<string, string>
+     * @return array
      */
     public function getMigrationFiles($paths)
     {
-        return (new Collection($paths))
-            ->flatMap(fn ($path) => str_ends_with($path, '.php') ? [$path] : $this->files->glob($path.'/*_*.php'))
-            ->filter()
-            ->values()
-            ->keyBy(fn ($file) => $this->getMigrationName($file))
-            ->sortBy(fn ($file, $key) => $key)
-            ->all();
+        return Collection::make($paths)->flatMap(function ($path) {
+            return Str::endsWith($path, '.php') ? [$path] : $this->files->glob($path.'/*_*.php');
+        })->filter()->values()->keyBy(function ($file) {
+            return $this->getMigrationName($file);
+        })->sortBy(function ($file, $key) {
+            return $key;
+        })->all();
     }
 
     /**
      * Require in all the migration files in a given path.
      *
-     * @param  string[]  $files
+     * @param  array  $files
      * @return void
      */
     public function requireFiles(array $files)
@@ -583,7 +508,7 @@ class Migrator
     /**
      * Get all of the custom migration paths.
      *
-     * @return string[]
+     * @return array
      */
     public function paths()
     {
@@ -613,7 +538,9 @@ class Migrator
 
         $this->setConnection($name);
 
-        return tap($callback(), fn () => $this->setConnection($previousConnection));
+        return tap($callback(), function () use ($previousConnection) {
+            $this->setConnection($previousConnection);
+        });
     }
 
     /**
@@ -682,26 +609,6 @@ class Migrator
     }
 
     /**
-     * Determine if any migrations have been run.
-     *
-     * @return bool
-     */
-    public function hasRunAnyMigrations()
-    {
-        return $this->repositoryExists() && count($this->repository->getRan()) > 0;
-    }
-
-    /**
-     * Delete the migration repository data store.
-     *
-     * @return void
-     */
-    public function deleteRepository()
-    {
-        $this->repository->deleteRepository();
-    }
-
-    /**
      * Get the file system instance.
      *
      * @return \Illuminate\Filesystem\Filesystem
@@ -725,22 +632,15 @@ class Migrator
     }
 
     /**
-     * Write to the console's output.
+     * Write a note to the console's output.
      *
-     * @param  string  $component
-     * @param  array<int, string>|string  ...$arguments
+     * @param  string  $message
      * @return void
      */
-    protected function write($component, ...$arguments)
+    protected function note($message)
     {
-        if ($this->output && class_exists($component)) {
-            (new $component($this->output))->render(...$arguments);
-        } else {
-            foreach ($arguments as $argument) {
-                if (is_callable($argument)) {
-                    $argument();
-                }
-            }
+        if ($this->output) {
+            $this->output->writeln($message);
         }
     }
 
@@ -752,6 +652,8 @@ class Migrator
      */
     public function fireMigrationEvent($event)
     {
-        $this->events?->dispatch($event);
+        if ($this->events) {
+            $this->events->dispatch($event);
+        }
     }
 }

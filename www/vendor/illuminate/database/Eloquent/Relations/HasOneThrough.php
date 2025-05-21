@@ -2,29 +2,31 @@
 
 namespace Illuminate\Database\Eloquent\Relations;
 
-use Illuminate\Database\Eloquent\Collection as EloquentCollection;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\Concerns\InteractsWithDictionary;
 use Illuminate\Database\Eloquent\Relations\Concerns\SupportsDefaultModels;
 
-/**
- * @template TRelatedModel of \Illuminate\Database\Eloquent\Model
- * @template TIntermediateModel of \Illuminate\Database\Eloquent\Model
- * @template TDeclaringModel of \Illuminate\Database\Eloquent\Model
- *
- * @extends \Illuminate\Database\Eloquent\Relations\HasOneOrManyThrough<TRelatedModel, TIntermediateModel, TDeclaringModel, ?TRelatedModel>
- */
-class HasOneThrough extends HasOneOrManyThrough
+class HasOneThrough extends HasManyThrough
 {
-    use InteractsWithDictionary, SupportsDefaultModels;
+    use SupportsDefaultModels;
 
-    /** @inheritDoc */
+    /**
+     * Get the results of the relationship.
+     *
+     * @return mixed
+     */
     public function getResults()
     {
         return $this->first() ?: $this->getDefaultFor($this->farParent);
     }
 
-    /** @inheritDoc */
+    /**
+     * Initialize the relation on a set of models.
+     *
+     * @param  array  $models
+     * @param  string  $relation
+     * @return array
+     */
     public function initRelation(array $models, $relation)
     {
         foreach ($models as $model) {
@@ -34,8 +36,15 @@ class HasOneThrough extends HasOneOrManyThrough
         return $models;
     }
 
-    /** @inheritDoc */
-    public function match(array $models, EloquentCollection $results, $relation)
+    /**
+     * Match the eagerly loaded results to their parents.
+     *
+     * @param  array  $models
+     * @param  \Illuminate\Database\Eloquent\Collection  $results
+     * @param  string  $relation
+     * @return array
+     */
+    public function match(array $models, Collection $results, $relation)
     {
         $dictionary = $this->buildDictionary($results);
 
@@ -43,7 +52,7 @@ class HasOneThrough extends HasOneOrManyThrough
         // link them up with their children using the keyed dictionary to make the
         // matching very convenient and easy work. Then we'll just return them.
         foreach ($models as $model) {
-            if (isset($dictionary[$key = $this->getDictionaryKey($model->getAttribute($this->localKey))])) {
+            if (isset($dictionary[$key = $model->getAttribute($this->localKey)])) {
                 $value = $dictionary[$key];
                 $model->setRelation(
                     $relation, reset($value)
@@ -57,8 +66,8 @@ class HasOneThrough extends HasOneOrManyThrough
     /**
      * Make a new related instance for the given model.
      *
-     * @param  TDeclaringModel  $parent
-     * @return TRelatedModel
+     * @param  \Illuminate\Database\Eloquent\Model  $parent
+     * @return \Illuminate\Database\Eloquent\Model
      */
     public function newRelatedInstanceFor(Model $parent)
     {

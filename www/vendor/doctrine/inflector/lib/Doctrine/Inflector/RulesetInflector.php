@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Doctrine\Inflector;
 
 use Doctrine\Inflector\Rules\Ruleset;
-
 use function array_merge;
 
 /**
@@ -27,7 +26,7 @@ class RulesetInflector implements WordInflector
         $this->rulesets = array_merge([$ruleset], $rulesets);
     }
 
-    public function inflect(string $word): string
+    public function inflect(string $word) : string
     {
         if ($word === '') {
             return '';
@@ -37,13 +36,17 @@ class RulesetInflector implements WordInflector
             if ($ruleset->getUninflected()->matches($word)) {
                 return $word;
             }
+        }
 
+        foreach ($this->rulesets as $ruleset) {
             $inflected = $ruleset->getIrregular()->inflect($word);
 
             if ($inflected !== $word) {
                 return $inflected;
             }
+        }
 
+        foreach ($this->rulesets as $ruleset) {
             $inflected = $ruleset->getRegular()->inflect($word);
 
             if ($inflected !== $word) {

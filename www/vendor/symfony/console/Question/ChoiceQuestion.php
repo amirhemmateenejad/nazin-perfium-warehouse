@@ -20,34 +20,35 @@ use Symfony\Component\Console\Exception\InvalidArgumentException;
  */
 class ChoiceQuestion extends Question
 {
-    private bool $multiselect = false;
-    private string $prompt = ' > ';
-    private string $errorMessage = 'Value "%s" is invalid';
+    private $choices;
+    private $multiselect = false;
+    private $prompt = ' > ';
+    private $errorMessage = 'Value "%s" is invalid';
 
     /**
-     * @param string                     $question The question to ask to the user
-     * @param array                      $choices  The list of available choices
-     * @param string|bool|int|float|null $default  The default answer to return
+     * @param string $question The question to ask to the user
+     * @param array  $choices  The list of available choices
+     * @param mixed  $default  The default answer to return
      */
-    public function __construct(
-        string $question,
-        private array $choices,
-        string|bool|int|float|null $default = null,
-    ) {
+    public function __construct(string $question, array $choices, $default = null)
+    {
         if (!$choices) {
             throw new \LogicException('Choice question must have at least 1 choice available.');
         }
 
         parent::__construct($question, $default);
 
+        $this->choices = $choices;
         $this->setValidator($this->getDefaultValidator());
         $this->setAutocompleterValues($choices);
     }
 
     /**
      * Returns available choices.
+     *
+     * @return array
      */
-    public function getChoices(): array
+    public function getChoices()
     {
         return $this->choices;
     }
@@ -59,7 +60,7 @@ class ChoiceQuestion extends Question
      *
      * @return $this
      */
-    public function setMultiselect(bool $multiselect): static
+    public function setMultiselect(bool $multiselect)
     {
         $this->multiselect = $multiselect;
         $this->setValidator($this->getDefaultValidator());
@@ -69,16 +70,20 @@ class ChoiceQuestion extends Question
 
     /**
      * Returns whether the choices are multiselect.
+     *
+     * @return bool
      */
-    public function isMultiselect(): bool
+    public function isMultiselect()
     {
         return $this->multiselect;
     }
 
     /**
      * Gets the prompt for choices.
+     *
+     * @return string
      */
-    public function getPrompt(): string
+    public function getPrompt()
     {
         return $this->prompt;
     }
@@ -88,7 +93,7 @@ class ChoiceQuestion extends Question
      *
      * @return $this
      */
-    public function setPrompt(string $prompt): static
+    public function setPrompt(string $prompt)
     {
         $this->prompt = $prompt;
 
@@ -102,7 +107,7 @@ class ChoiceQuestion extends Question
      *
      * @return $this
      */
-    public function setErrorMessage(string $errorMessage): static
+    public function setErrorMessage(string $errorMessage)
     {
         $this->errorMessage = $errorMessage;
         $this->setValidator($this->getDefaultValidator());
@@ -121,7 +126,7 @@ class ChoiceQuestion extends Question
             if ($multiselect) {
                 // Check for a separated comma values
                 if (!preg_match('/^[^,]+(?:,[^,]+)*$/', (string) $selected, $matches)) {
-                    throw new InvalidArgumentException(\sprintf($errorMessage, $selected));
+                    throw new InvalidArgumentException(sprintf($errorMessage, $selected));
                 }
 
                 $selectedChoices = explode(',', (string) $selected);
@@ -145,7 +150,7 @@ class ChoiceQuestion extends Question
                 }
 
                 if (\count($results) > 1) {
-                    throw new InvalidArgumentException(\sprintf('The provided answer is ambiguous. Value should be one of "%s".', implode('" or "', $results)));
+                    throw new InvalidArgumentException(sprintf('The provided answer is ambiguous. Value should be one of "%s".', implode('" or "', $results)));
                 }
 
                 $result = array_search($value, $choices);
@@ -161,7 +166,7 @@ class ChoiceQuestion extends Question
                 }
 
                 if (false === $result) {
-                    throw new InvalidArgumentException(\sprintf($errorMessage, $value));
+                    throw new InvalidArgumentException(sprintf($errorMessage, $value));
                 }
 
                 // For associative choices, consistently return the key as string:

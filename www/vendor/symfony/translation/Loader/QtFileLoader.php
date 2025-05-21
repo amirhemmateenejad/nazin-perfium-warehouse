@@ -15,7 +15,6 @@ use Symfony\Component\Config\Resource\FileResource;
 use Symfony\Component\Config\Util\XmlUtils;
 use Symfony\Component\Translation\Exception\InvalidResourceException;
 use Symfony\Component\Translation\Exception\NotFoundResourceException;
-use Symfony\Component\Translation\Exception\RuntimeException;
 use Symfony\Component\Translation\MessageCatalogue;
 
 /**
@@ -25,24 +24,23 @@ use Symfony\Component\Translation\MessageCatalogue;
  */
 class QtFileLoader implements LoaderInterface
 {
-    public function load(mixed $resource, string $locale, string $domain = 'messages'): MessageCatalogue
+    /**
+     * {@inheritdoc}
+     */
+    public function load($resource, string $locale, string $domain = 'messages')
     {
-        if (!class_exists(XmlUtils::class)) {
-            throw new RuntimeException('Loading translations from the QT format requires the Symfony Config component.');
-        }
-
         if (!stream_is_local($resource)) {
-            throw new InvalidResourceException(\sprintf('This is not a local file "%s".', $resource));
+            throw new InvalidResourceException(sprintf('This is not a local file "%s".', $resource));
         }
 
         if (!file_exists($resource)) {
-            throw new NotFoundResourceException(\sprintf('File "%s" not found.', $resource));
+            throw new NotFoundResourceException(sprintf('File "%s" not found.', $resource));
         }
 
         try {
             $dom = XmlUtils::loadFile($resource);
         } catch (\InvalidArgumentException $e) {
-            throw new InvalidResourceException(\sprintf('Unable to load "%s".', $resource), $e->getCode(), $e);
+            throw new InvalidResourceException(sprintf('Unable to load "%s".', $resource), $e->getCode(), $e);
         }
 
         $internalErrors = libxml_use_internal_errors(true);
@@ -57,16 +55,17 @@ class QtFileLoader implements LoaderInterface
             foreach ($translations as $translation) {
                 $translationValue = (string) $translation->getElementsByTagName('translation')->item(0)->nodeValue;
 
-                if ($translationValue) {
+                if (!empty($translationValue)) {
                     $catalogue->set(
                         (string) $translation->getElementsByTagName('source')->item(0)->nodeValue,
                         $translationValue,
                         $domain
                     );
                 }
+                $translation = $translation->nextSibling;
             }
 
-            if (class_exists(FileResource::class)) {
+            if (class_exists('Symfony\Component\Config\Resource\FileResource')) {
                 $catalogue->addResource(new FileResource($resource));
             }
         }

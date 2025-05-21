@@ -17,8 +17,6 @@ class ConfigurationUrlParser
         'postgres' => 'pgsql',
         'postgresql' => 'pgsql',
         'sqlite3' => 'sqlite',
-        'redis' => 'tcp',
-        'rediss' => 'tls',
     ];
 
     /**
@@ -39,16 +37,12 @@ class ConfigurationUrlParser
             return $config;
         }
 
-        $rawComponents = $this->parseUrl($url);
-
-        $decodedComponents = $this->parseStringsToNativeTypes(
-            array_map('rawurldecode', $rawComponents)
-        );
+        $parsedUrl = $this->parseUrl($url);
 
         return array_merge(
             $config,
-            $this->getPrimaryOptions($decodedComponents),
-            $this->getQueryOptions($rawComponents)
+            $this->getPrimaryOptions($parsedUrl),
+            $this->getQueryOptions($parsedUrl)
         );
     }
 
@@ -67,7 +61,9 @@ class ConfigurationUrlParser
             'port' => $url['port'] ?? null,
             'username' => $url['user'] ?? null,
             'password' => $url['pass'] ?? null,
-        ], fn ($value) => ! is_null($value));
+        ], function ($value) {
+            return ! is_null($value);
+        });
     }
 
     /**
@@ -139,7 +135,9 @@ class ConfigurationUrlParser
             throw new InvalidArgumentException('The database configuration URL is malformed.');
         }
 
-        return $parsedUrl;
+        return $this->parseStringsToNativeTypes(
+            array_map('rawurldecode', $parsedUrl)
+        );
     }
 
     /**
@@ -168,7 +166,7 @@ class ConfigurationUrlParser
     }
 
     /**
-     * Get all of the current drivers' aliases.
+     * Get all of the current drivers aliases.
      *
      * @return array
      */

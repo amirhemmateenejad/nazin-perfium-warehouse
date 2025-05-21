@@ -2,6 +2,7 @@
 
 namespace Illuminate\Database\Connectors;
 
+use Doctrine\DBAL\Driver\PDOConnection;
 use Exception;
 use Illuminate\Database\DetectsLostConnections;
 use PDO;
@@ -60,11 +61,25 @@ class Connector
      * @param  array  $options
      * @return \PDO
      */
-    protected function createPdoConnection($dsn, $username, #[\SensitiveParameter] $password, $options)
+    protected function createPdoConnection($dsn, $username, $password, $options)
     {
-        return version_compare(phpversion(), '8.4.0', '<')
-            ? new PDO($dsn, $username, $password, $options)
-            : PDO::connect($dsn, $username, $password, $options); /** @phpstan-ignore staticMethod.notFound (PHP 8.4) */
+        if (class_exists(PDOConnection::class) && ! $this->isPersistentConnection($options)) {
+            return new PDOConnection($dsn, $username, $password, $options);
+        }
+
+        return new PDO($dsn, $username, $password, $options);
+    }
+
+    /**
+     * Determine if the connection is persistent.
+     *
+     * @param  array  $options
+     * @return bool
+     */
+    protected function isPersistentConnection($options)
+    {
+        return isset($options[PDO::ATTR_PERSISTENT]) &&
+               $options[PDO::ATTR_PERSISTENT];
     }
 
     /**
@@ -77,9 +92,9 @@ class Connector
      * @param  array  $options
      * @return \PDO
      *
-     * @throws \Throwable
+     * @throws \Exception
      */
-    protected function tryAgainIfCausedByLostConnection(Throwable $e, $dsn, $username, #[\SensitiveParameter] $password, $options)
+    protected function tryAgainIfCausedByLostConnection(Throwable $e, $dsn, $username, $password, $options)
     {
         if ($this->causedByLostConnection($e)) {
             return $this->createPdoConnection($dsn, $username, $password, $options);

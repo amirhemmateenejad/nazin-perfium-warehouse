@@ -22,7 +22,7 @@ use Symfony\Component\Filesystem\Exception\IOException;
  */
 class Filesystem
 {
-    private static ?string $lastError = null;
+    private static $lastError;
 
     /**
      * Copies a file.
@@ -34,29 +34,29 @@ class Filesystem
      * @throws FileNotFoundException When originFile doesn't exist
      * @throws IOException           When copy fails
      */
-    public function copy(string $originFile, string $targetFile, bool $overwriteNewerFiles = false): void
+    public function copy(string $originFile, string $targetFile, bool $overwriteNewerFiles = false)
     {
         $originIsLocal = stream_is_local($originFile) || 0 === stripos($originFile, 'file://');
         if ($originIsLocal && !is_file($originFile)) {
-            throw new FileNotFoundException(\sprintf('Failed to copy "%s" because file does not exist.', $originFile), 0, null, $originFile);
+            throw new FileNotFoundException(sprintf('Failed to copy "%s" because file does not exist.', $originFile), 0, null, $originFile);
         }
 
         $this->mkdir(\dirname($targetFile));
 
         $doCopy = true;
-        if (!$overwriteNewerFiles && !parse_url($originFile, \PHP_URL_HOST) && is_file($targetFile)) {
+        if (!$overwriteNewerFiles && null === parse_url($originFile, PHP_URL_HOST) && is_file($targetFile)) {
             $doCopy = filemtime($originFile) > filemtime($targetFile);
         }
 
         if ($doCopy) {
             // https://bugs.php.net/64634
-            if (!$source = self::box('fopen', $originFile, 'r')) {
-                throw new IOException(\sprintf('Failed to copy "%s" to "%s" because source file could not be opened for reading: ', $originFile, $targetFile).self::$lastError, 0, null, $originFile);
+            if (false === $source = @fopen($originFile, 'r')) {
+                throw new IOException(sprintf('Failed to copy "%s" to "%s" because source file could not be opened for reading.', $originFile, $targetFile), 0, null, $originFile);
             }
 
             // Stream context created to allow files overwrite when using FTP stream wrapper - disabled by default
-            if (!$target = self::box('fopen', $targetFile, 'w', false, stream_context_create(['ftp' => ['overwrite' => true]]))) {
-                throw new IOException(\sprintf('Failed to copy "%s" to "%s" because target file could not be opened for writing: ', $originFile, $targetFile).self::$lastError, 0, null, $originFile);
+            if (false === $target = @fopen($targetFile, 'w', null, stream_context_create(['ftp' => ['overwrite' => true]]))) {
+                throw new IOException(sprintf('Failed to copy "%s" to "%s" because target file could not be opened for writing.', $originFile, $targetFile), 0, null, $originFile);
             }
 
             $bytesCopied = stream_copy_to_stream($source, $target);
@@ -65,18 +65,15 @@ class Filesystem
             unset($source, $target);
 
             if (!is_file($targetFile)) {
-                throw new IOException(\sprintf('Failed to copy "%s" to "%s".', $originFile, $targetFile), 0, null, $originFile);
+                throw new IOException(sprintf('Failed to copy "%s" to "%s".', $originFile, $targetFile), 0, null, $originFile);
             }
 
             if ($originIsLocal) {
                 // Like `cp`, preserve executable permission bits
-                self::box('chmod', $targetFile, fileperms($targetFile) | (fileperms($originFile) & 0111));
-
-                // Like `cp`, preserve the file modification time
-                self::box('touch', $targetFile, filemtime($originFile));
+                @chmod($targetFile, fileperms($targetFile) | (fileperms($originFile) & 0111));
 
                 if ($bytesCopied !== $bytesOrigin = filesize($originFile)) {
-                    throw new IOException(\sprintf('Failed to copy the whole content of "%s" to "%s" (%g of %g bytes copied).', $originFile, $targetFile, $bytesCopied, $bytesOrigin), 0, null, $originFile);
+                    throw new IOException(sprintf('Failed to copy the whole content of "%s" to "%s" (%g of %g bytes copied).', $originFile, $targetFile, $bytesCopied, $bytesOrigin), 0, null, $originFile);
                 }
             }
         }
@@ -85,31 +82,43 @@ class Filesystem
     /**
      * Creates a directory recursively.
      *
+     * @param string|iterable $dirs The directory path
+     *
      * @throws IOException On any directory creation failure
      */
-    public function mkdir(string|iterable $dirs, int $mode = 0777): void
+    public function mkdir($dirs, int $mode = 0777)
     {
         foreach ($this->toIterable($dirs) as $dir) {
             if (is_dir($dir)) {
                 continue;
             }
 
-            if (!self::box('mkdir', $dir, $mode, true) && !is_dir($dir)) {
-                throw new IOException(\sprintf('Failed to create "%s": ', $dir).self::$lastError, 0, null, $dir);
+            if (!self::box('mkdir', $dir, $mode, true)) {
+                if (!is_dir($dir)) {
+                    // The directory was not created by a concurrent process. Let's throw an exception with a developer friendly error message if we have one
+                    if (self::$lastError) {
+                        throw new IOException(sprintf('Failed to create "%s": '.self::$lastError, $dir), 0, null, $dir);
+                    }
+                    throw new IOException(sprintf('Failed to create "%s".', $dir), 0, null, $dir);
+                }
             }
         }
     }
 
     /**
      * Checks the existence of files or directories.
+     *
+     * @param string|iterable $files A filename, an array of files, or a \Traversable instance to check
+     *
+     * @return bool true if the file exists, false otherwise
      */
-    public function exists(string|iterable $files): bool
+    public function exists($files)
     {
-        $maxPathLength = \PHP_MAXPATHLEN - 2;
+        $maxPathLength = PHP_MAXPATHLEN - 2;
 
         foreach ($this->toIterable($files) as $file) {
             if (\strlen($file) > $maxPathLength) {
-                throw new IOException(\sprintf('Could not check if file exist because path length exceeds %d characters.', $maxPathLength), 0, null, $file);
+                throw new IOException(sprintf('Could not check if file exist because path length exceeds %d characters.', $maxPathLength), 0, null, $file);
             }
 
             if (!file_exists($file)) {
@@ -123,16 +132,18 @@ class Filesystem
     /**
      * Sets access and modification time of file.
      *
-     * @param int|null $time  The touch time as a Unix timestamp, if not supplied the current system time is used
-     * @param int|null $atime The access time as a Unix timestamp, if not supplied the current system time is used
+     * @param string|iterable $files A filename, an array of files, or a \Traversable instance to create
+     * @param int|null        $time  The touch time as a Unix timestamp, if not supplied the current system time is used
+     * @param int|null        $atime The access time as a Unix timestamp, if not supplied the current system time is used
      *
      * @throws IOException When touch fails
      */
-    public function touch(string|iterable $files, ?int $time = null, ?int $atime = null): void
+    public function touch($files, int $time = null, int $atime = null)
     {
         foreach ($this->toIterable($files) as $file) {
-            if (!($time ? self::box('touch', $file, $time, $atime) : self::box('touch', $file))) {
-                throw new IOException(\sprintf('Failed to touch "%s": ', $file).self::$lastError, 0, null, $file);
+            $touch = $time ? @touch($file, $time, $atime) : @touch($file);
+            if (true !== $touch) {
+                throw new IOException(sprintf('Failed to touch "%s".', $file), 0, null, $file);
             }
         }
     }
@@ -140,61 +151,32 @@ class Filesystem
     /**
      * Removes files or directories.
      *
+     * @param string|iterable $files A filename, an array of files, or a \Traversable instance to remove
+     *
      * @throws IOException When removal fails
      */
-    public function remove(string|iterable $files): void
+    public function remove($files)
     {
         if ($files instanceof \Traversable) {
             $files = iterator_to_array($files, false);
         } elseif (!\is_array($files)) {
             $files = [$files];
         }
-
-        self::doRemove($files, false);
-    }
-
-    private static function doRemove(array $files, bool $isRecursive): void
-    {
         $files = array_reverse($files);
         foreach ($files as $file) {
             if (is_link($file)) {
                 // See https://bugs.php.net/52176
                 if (!(self::box('unlink', $file) || '\\' !== \DIRECTORY_SEPARATOR || self::box('rmdir', $file)) && file_exists($file)) {
-                    throw new IOException(\sprintf('Failed to remove symlink "%s": ', $file).self::$lastError);
+                    throw new IOException(sprintf('Failed to remove symlink "%s": '.self::$lastError, $file));
                 }
             } elseif (is_dir($file)) {
-                if (!$isRecursive) {
-                    $tmpName = \dirname(realpath($file)).'/.!'.strrev(strtr(base64_encode(random_bytes(2)), '/=', '-!'));
+                $this->remove(new \FilesystemIterator($file, \FilesystemIterator::CURRENT_AS_PATHNAME | \FilesystemIterator::SKIP_DOTS));
 
-                    if (file_exists($tmpName)) {
-                        try {
-                            self::doRemove([$tmpName], true);
-                        } catch (IOException) {
-                        }
-                    }
-
-                    if (!file_exists($tmpName) && self::box('rename', $file, $tmpName)) {
-                        $origFile = $file;
-                        $file = $tmpName;
-                    } else {
-                        $origFile = null;
-                    }
+                if (!self::box('rmdir', $file) && file_exists($file)) {
+                    throw new IOException(sprintf('Failed to remove directory "%s": '.self::$lastError, $file));
                 }
-
-                $filesystemIterator = new \FilesystemIterator($file, \FilesystemIterator::CURRENT_AS_PATHNAME | \FilesystemIterator::SKIP_DOTS);
-                self::doRemove(iterator_to_array($filesystemIterator, true), true);
-
-                if (!self::box('rmdir', $file) && file_exists($file) && !$isRecursive) {
-                    $lastError = self::$lastError;
-
-                    if (null !== $origFile && self::box('rename', $file, $origFile)) {
-                        $file = $origFile;
-                    }
-
-                    throw new IOException(\sprintf('Failed to remove directory "%s": ', $file).$lastError);
-                }
-            } elseif (!self::box('unlink', $file) && ((self::$lastError && str_contains(self::$lastError, 'Permission denied')) || file_exists($file))) {
-                throw new IOException(\sprintf('Failed to remove file "%s": ', $file).self::$lastError);
+            } elseif (!self::box('unlink', $file) && file_exists($file)) {
+                throw new IOException(sprintf('Failed to remove file "%s": '.self::$lastError, $file));
             }
         }
     }
@@ -202,17 +184,18 @@ class Filesystem
     /**
      * Change mode for an array of files or directories.
      *
-     * @param int  $mode      The new mode (octal)
-     * @param int  $umask     The mode mask (octal)
-     * @param bool $recursive Whether change the mod recursively or not
+     * @param string|iterable $files     A filename, an array of files, or a \Traversable instance to change mode
+     * @param int             $mode      The new mode (octal)
+     * @param int             $umask     The mode mask (octal)
+     * @param bool            $recursive Whether change the mod recursively or not
      *
      * @throws IOException When the change fails
      */
-    public function chmod(string|iterable $files, int $mode, int $umask = 0000, bool $recursive = false): void
+    public function chmod($files, int $mode, int $umask = 0000, bool $recursive = false)
     {
         foreach ($this->toIterable($files) as $file) {
-            if (!self::box('chmod', $file, $mode & ~$umask)) {
-                throw new IOException(\sprintf('Failed to chmod file "%s": ', $file).self::$lastError, 0, null, $file);
+            if (true !== @chmod($file, $mode & ~$umask)) {
+                throw new IOException(sprintf('Failed to chmod file "%s".', $file), 0, null, $file);
             }
             if ($recursive && is_dir($file) && !is_link($file)) {
                 $this->chmod(new \FilesystemIterator($file), $mode, $umask, true);
@@ -223,28 +206,25 @@ class Filesystem
     /**
      * Change the owner of an array of files or directories.
      *
-     * This method always throws on Windows, as the underlying PHP function is not supported.
-     *
-     * @see https://www.php.net/chown
-     *
-     * @param string|int $user      A user name or number
-     * @param bool       $recursive Whether change the owner recursively or not
+     * @param string|iterable $files     A filename, an array of files, or a \Traversable instance to change owner
+     * @param string|int      $user      A user name or number
+     * @param bool            $recursive Whether change the owner recursively or not
      *
      * @throws IOException When the change fails
      */
-    public function chown(string|iterable $files, string|int $user, bool $recursive = false): void
+    public function chown($files, $user, bool $recursive = false)
     {
         foreach ($this->toIterable($files) as $file) {
             if ($recursive && is_dir($file) && !is_link($file)) {
                 $this->chown(new \FilesystemIterator($file), $user, true);
             }
             if (is_link($file) && \function_exists('lchown')) {
-                if (!self::box('lchown', $file, $user)) {
-                    throw new IOException(\sprintf('Failed to chown file "%s": ', $file).self::$lastError, 0, null, $file);
+                if (true !== @lchown($file, $user)) {
+                    throw new IOException(sprintf('Failed to chown file "%s".', $file), 0, null, $file);
                 }
             } else {
-                if (!self::box('chown', $file, $user)) {
-                    throw new IOException(\sprintf('Failed to chown file "%s": ', $file).self::$lastError, 0, null, $file);
+                if (true !== @chown($file, $user)) {
+                    throw new IOException(sprintf('Failed to chown file "%s".', $file), 0, null, $file);
                 }
             }
         }
@@ -253,28 +233,25 @@ class Filesystem
     /**
      * Change the group of an array of files or directories.
      *
-     * This method always throws on Windows, as the underlying PHP function is not supported.
-     *
-     * @see https://www.php.net/chgrp
-     *
-     * @param string|int $group     A group name or number
-     * @param bool       $recursive Whether change the group recursively or not
+     * @param string|iterable $files     A filename, an array of files, or a \Traversable instance to change group
+     * @param string|int      $group     A group name or number
+     * @param bool            $recursive Whether change the group recursively or not
      *
      * @throws IOException When the change fails
      */
-    public function chgrp(string|iterable $files, string|int $group, bool $recursive = false): void
+    public function chgrp($files, $group, bool $recursive = false)
     {
         foreach ($this->toIterable($files) as $file) {
             if ($recursive && is_dir($file) && !is_link($file)) {
                 $this->chgrp(new \FilesystemIterator($file), $group, true);
             }
             if (is_link($file) && \function_exists('lchgrp')) {
-                if (!self::box('lchgrp', $file, $group)) {
-                    throw new IOException(\sprintf('Failed to chgrp file "%s": ', $file).self::$lastError, 0, null, $file);
+                if (true !== @lchgrp($file, $group)) {
+                    throw new IOException(sprintf('Failed to chgrp file "%s".', $file), 0, null, $file);
                 }
             } else {
-                if (!self::box('chgrp', $file, $group)) {
-                    throw new IOException(\sprintf('Failed to chgrp file "%s": ', $file).self::$lastError, 0, null, $file);
+                if (true !== @chgrp($file, $group)) {
+                    throw new IOException(sprintf('Failed to chgrp file "%s".', $file), 0, null, $file);
                 }
             }
         }
@@ -286,14 +263,14 @@ class Filesystem
      * @throws IOException When target file or directory already exists
      * @throws IOException When origin cannot be renamed
      */
-    public function rename(string $origin, string $target, bool $overwrite = false): void
+    public function rename(string $origin, string $target, bool $overwrite = false)
     {
         // we check that target does not exist
         if (!$overwrite && $this->isReadable($target)) {
-            throw new IOException(\sprintf('Cannot rename because the target "%s" already exists.', $target), 0, null, $target);
+            throw new IOException(sprintf('Cannot rename because the target "%s" already exists.', $target), 0, null, $target);
         }
 
-        if (!self::box('rename', $origin, $target)) {
+        if (true !== @rename($origin, $target)) {
             if (is_dir($origin)) {
                 // See https://bugs.php.net/54097 & https://php.net/rename#113943
                 $this->mirror($origin, $target, null, ['override' => $overwrite, 'delete' => $overwrite]);
@@ -301,7 +278,7 @@ class Filesystem
 
                 return;
             }
-            throw new IOException(\sprintf('Cannot rename "%s" to "%s": ', $origin, $target).self::$lastError, 0, null, $target);
+            throw new IOException(sprintf('Cannot rename "%s" to "%s".', $origin, $target), 0, null, $target);
         }
     }
 
@@ -312,10 +289,10 @@ class Filesystem
      */
     private function isReadable(string $filename): bool
     {
-        $maxPathLength = \PHP_MAXPATHLEN - 2;
+        $maxPathLength = PHP_MAXPATHLEN - 2;
 
         if (\strlen($filename) > $maxPathLength) {
-            throw new IOException(\sprintf('Could not check if file is readable because path length exceeds %d characters.', $maxPathLength), 0, null, $filename);
+            throw new IOException(sprintf('Could not check if file is readable because path length exceeds %d characters.', $maxPathLength), 0, null, $filename);
         }
 
         return is_readable($filename);
@@ -326,10 +303,8 @@ class Filesystem
      *
      * @throws IOException When symlink fails
      */
-    public function symlink(string $originDir, string $targetDir, bool $copyOnWindows = false): void
+    public function symlink(string $originDir, string $targetDir, bool $copyOnWindows = false)
     {
-        self::assertFunctionExists('symlink');
-
         if ('\\' === \DIRECTORY_SEPARATOR) {
             $originDir = strtr($originDir, '/', '\\');
             $targetDir = strtr($targetDir, '/', '\\');
@@ -363,16 +338,14 @@ class Filesystem
      * @throws FileNotFoundException When original file is missing or not a file
      * @throws IOException           When link fails, including if link already exists
      */
-    public function hardlink(string $originFile, string|iterable $targetFiles): void
+    public function hardlink(string $originFile, $targetFiles)
     {
-        self::assertFunctionExists('link');
-
         if (!$this->exists($originFile)) {
             throw new FileNotFoundException(null, 0, null, $originFile);
         }
 
         if (!is_file($originFile)) {
-            throw new FileNotFoundException(\sprintf('Origin file "%s" is not a file.', $originFile));
+            throw new FileNotFoundException(sprintf('Origin file "%s" is not a file.', $originFile));
         }
 
         foreach ($this->toIterable($targetFiles) as $targetFile) {
@@ -392,14 +365,14 @@ class Filesystem
     /**
      * @param string $linkType Name of the link type, typically 'symbolic' or 'hard'
      */
-    private function linkException(string $origin, string $target, string $linkType): never
+    private function linkException(string $origin, string $target, string $linkType)
     {
         if (self::$lastError) {
-            if ('\\' === \DIRECTORY_SEPARATOR && str_contains(self::$lastError, 'error code(1314)')) {
-                throw new IOException(\sprintf('Unable to create "%s" link due to error code 1314: \'A required privilege is not held by the client\'. Do you have the required Administrator-rights?', $linkType), 0, null, $target);
+            if ('\\' === \DIRECTORY_SEPARATOR && false !== strpos(self::$lastError, 'error code(1314)')) {
+                throw new IOException(sprintf('Unable to create "%s" link due to error code 1314: \'A required privilege is not held by the client\'. Do you have the required Administrator-rights?', $linkType), 0, null, $target);
             }
         }
-        throw new IOException(\sprintf('Failed to create "%s" link from "%s" to "%s": ', $linkType, $origin, $target).self::$lastError, 0, null, $target);
+        throw new IOException(sprintf('Failed to create "%s" link from "%s" to "%s".', $linkType, $origin, $target), 0, null, $target);
     }
 
     /**
@@ -412,8 +385,10 @@ class Filesystem
      * With $canonicalize = true
      *      - if $path does not exist, returns null
      *      - if $path exists, returns its absolute fully resolved final version
+     *
+     * @return string|null
      */
-    public function readlink(string $path, bool $canonicalize = false): ?string
+    public function readlink(string $path, bool $canonicalize = false)
     {
         if (!$canonicalize && !is_link($path)) {
             return null;
@@ -424,6 +399,14 @@ class Filesystem
                 return null;
             }
 
+            if ('\\' === \DIRECTORY_SEPARATOR) {
+                $path = readlink($path);
+            }
+
+            return realpath($path);
+        }
+
+        if ('\\' === \DIRECTORY_SEPARATOR) {
             return realpath($path);
         }
 
@@ -432,15 +415,17 @@ class Filesystem
 
     /**
      * Given an existing path, convert it to a path relative to a given starting path.
+     *
+     * @return string Path of target relative to starting path
      */
-    public function makePathRelative(string $endPath, string $startPath): string
+    public function makePathRelative(string $endPath, string $startPath)
     {
         if (!$this->isAbsolutePath($startPath)) {
-            throw new InvalidArgumentException(\sprintf('The start path "%s" is not absolute.', $startPath));
+            throw new InvalidArgumentException(sprintf('The start path "%s" is not absolute.', $startPath));
         }
 
         if (!$this->isAbsolutePath($endPath)) {
-            throw new InvalidArgumentException(\sprintf('The end path "%s" is not absolute.', $endPath));
+            throw new InvalidArgumentException(sprintf('The end path "%s" is not absolute.', $endPath));
         }
 
         // Normalize separators on Windows
@@ -449,17 +434,28 @@ class Filesystem
             $startPath = str_replace('\\', '/', $startPath);
         }
 
-        $splitDriveLetter = fn ($path) => (\strlen($path) > 2 && ':' === $path[1] && '/' === $path[2] && ctype_alpha($path[0]))
-            ? [substr($path, 2), strtoupper($path[0])]
-            : [$path, null];
+        $stripDriveLetter = function ($path) {
+            if (\strlen($path) > 2 && ':' === $path[1] && '/' === $path[2] && ctype_alpha($path[0])) {
+                return substr($path, 2);
+            }
 
-        $splitPath = function ($path) {
+            return $path;
+        };
+
+        $endPath = $stripDriveLetter($endPath);
+        $startPath = $stripDriveLetter($startPath);
+
+        // Split the paths into arrays
+        $startPathArr = explode('/', trim($startPath, '/'));
+        $endPathArr = explode('/', trim($endPath, '/'));
+
+        $normalizePathArray = function ($pathSegments) {
             $result = [];
 
-            foreach (explode('/', trim($path, '/')) as $segment) {
+            foreach ($pathSegments as $segment) {
                 if ('..' === $segment) {
                     array_pop($result);
-                } elseif ('.' !== $segment && '' !== $segment) {
+                } elseif ('.' !== $segment) {
                     $result[] = $segment;
                 }
             }
@@ -467,16 +463,8 @@ class Filesystem
             return $result;
         };
 
-        [$endPath, $endDriveLetter] = $splitDriveLetter($endPath);
-        [$startPath, $startDriveLetter] = $splitDriveLetter($startPath);
-
-        $startPathArr = $splitPath($startPath);
-        $endPathArr = $splitPath($endPath);
-
-        if ($endDriveLetter && $startDriveLetter && $endDriveLetter != $startDriveLetter) {
-            // End path is on another drive, so no relative path exists
-            return $endDriveLetter.':/'.($endPathArr ? implode('/', $endPathArr).'/' : '');
-        }
+        $startPathArr = $normalizePathArray($startPathArr);
+        $endPathArr = $normalizePathArray($endPathArr);
 
         // Find for which directory the common path stops
         $index = 0;
@@ -519,14 +507,14 @@ class Filesystem
      *
      * @throws IOException When file type is unknown
      */
-    public function mirror(string $originDir, string $targetDir, ?\Traversable $iterator = null, array $options = []): void
+    public function mirror(string $originDir, string $targetDir, \Traversable $iterator = null, array $options = [])
     {
         $targetDir = rtrim($targetDir, '/\\');
         $originDir = rtrim($originDir, '/\\');
         $originDirLen = \strlen($originDir);
 
         if (!$this->exists($originDir)) {
-            throw new IOException(\sprintf('The origin directory specified "%s" was not found.', $originDir), 0, null, $originDir);
+            throw new IOException(sprintf('The origin directory specified "%s" was not found.', $originDir), 0, null, $originDir);
         }
 
         // Iterate in destination folder to remove obsolete entries
@@ -568,25 +556,27 @@ class Filesystem
             } elseif (is_dir($file)) {
                 $this->mkdir($target);
             } elseif (is_file($file)) {
-                $this->copy($file, $target, $options['override'] ?? false);
+                $this->copy($file, $target, isset($options['override']) ? $options['override'] : false);
             } else {
-                throw new IOException(\sprintf('Unable to guess "%s" file type.', $file), 0, null, $file);
+                throw new IOException(sprintf('Unable to guess "%s" file type.', $file), 0, null, $file);
             }
         }
     }
 
     /**
      * Returns whether the file path is an absolute path.
+     *
+     * @return bool
      */
-    public function isAbsolutePath(string $file): bool
+    public function isAbsolutePath(string $file)
     {
-        return '' !== $file && (strspn($file, '/\\', 0, 1)
+        return strspn($file, '/\\', 0, 1)
             || (\strlen($file) > 3 && ctype_alpha($file[0])
                 && ':' === $file[1]
                 && strspn($file, '/\\', 2, 1)
             )
-            || null !== parse_url($file, \PHP_URL_SCHEME)
-        );
+            || null !== parse_url($file, PHP_URL_SCHEME)
+        ;
     }
 
     /**
@@ -594,18 +584,19 @@ class Filesystem
      *
      * @param string $prefix The prefix of the generated temporary filename
      *                       Note: Windows uses only the first three characters of prefix
-     * @param string $suffix The suffix of the generated temporary filename
      *
      * @return string The new temporary filename (with path), or throw an exception on failure
      */
-    public function tempnam(string $dir, string $prefix, string $suffix = ''): string
+    public function tempnam(string $dir, string $prefix)
     {
-        [$scheme, $hierarchy] = $this->getSchemeAndHierarchy($dir);
+        list($scheme, $hierarchy) = $this->getSchemeAndHierarchy($dir);
 
         // If no scheme or scheme is "file" or "gs" (Google Cloud) create temp file in local filesystem
-        if ((null === $scheme || 'file' === $scheme || 'gs' === $scheme) && '' === $suffix) {
+        if (null === $scheme || 'file' === $scheme || 'gs' === $scheme) {
+            $tmpFile = @tempnam($hierarchy, $prefix);
+
             // If tempnam failed or no scheme return the filename otherwise prepend the scheme
-            if ($tmpFile = self::box('tempnam', $hierarchy, $prefix)) {
+            if (false !== $tmpFile) {
                 if (null !== $scheme && 'gs' !== $scheme) {
                     return $scheme.'://'.$tmpFile;
                 }
@@ -613,27 +604,30 @@ class Filesystem
                 return $tmpFile;
             }
 
-            throw new IOException('A temporary file could not be created: '.self::$lastError);
+            throw new IOException('A temporary file could not be created.');
         }
 
         // Loop until we create a valid temp file or have reached 10 attempts
         for ($i = 0; $i < 10; ++$i) {
             // Create a unique filename
-            $tmpFile = $dir.'/'.$prefix.bin2hex(random_bytes(4)).$suffix;
+            $tmpFile = $dir.'/'.$prefix.uniqid(mt_rand(), true);
 
             // Use fopen instead of file_exists as some streams do not support stat
             // Use mode 'x+' to atomically check existence and create to avoid a TOCTOU vulnerability
-            if (!$handle = self::box('fopen', $tmpFile, 'x+')) {
+            $handle = @fopen($tmpFile, 'x+');
+
+            // If unsuccessful restart the loop
+            if (false === $handle) {
                 continue;
             }
 
             // Close the file if it was successfully opened
-            self::box('fclose', $handle);
+            @fclose($handle);
 
             return $tmpFile;
         }
 
-        throw new IOException('A temporary file could not be created: '.self::$lastError);
+        throw new IOException('A temporary file could not be created.');
     }
 
     /**
@@ -643,59 +637,46 @@ class Filesystem
      *
      * @throws IOException if the file cannot be written to
      */
-    public function dumpFile(string $filename, $content): void
+    public function dumpFile(string $filename, $content)
     {
         if (\is_array($content)) {
-            throw new \TypeError(\sprintf('Argument 2 passed to "%s()" must be string or resource, array given.', __METHOD__));
+            throw new \TypeError(sprintf('Argument 2 passed to "%s()" must be string or resource, array given.', __METHOD__));
         }
 
         $dir = \dirname($filename);
 
-        if (is_link($filename) && $linkTarget = $this->readlink($filename)) {
-            $this->dumpFile(Path::makeAbsolute($linkTarget, $dir), $content);
-
-            return;
-        }
-
         if (!is_dir($dir)) {
             $this->mkdir($dir);
+        }
+
+        if (!is_writable($dir)) {
+            throw new IOException(sprintf('Unable to write to the "%s" directory.', $dir), 0, null, $dir);
         }
 
         // Will create a temp file with 0600 access rights
         // when the filesystem supports chmod.
         $tmpFile = $this->tempnam($dir, basename($filename));
 
-        try {
-            if (false === self::box('file_put_contents', $tmpFile, $content)) {
-                throw new IOException(\sprintf('Failed to write file "%s": ', $filename).self::$lastError, 0, null, $filename);
-            }
-
-            self::box('chmod', $tmpFile, self::box('fileperms', $filename) ?: 0666 & ~umask());
-
-            $this->rename($tmpFile, $filename, true);
-        } finally {
-            if (file_exists($tmpFile)) {
-                if ('\\' === \DIRECTORY_SEPARATOR && !is_writable($tmpFile)) {
-                    self::box('chmod', $tmpFile, self::box('fileperms', $tmpFile) | 0200);
-                }
-
-                self::box('unlink', $tmpFile);
-            }
+        if (false === @file_put_contents($tmpFile, $content)) {
+            throw new IOException(sprintf('Failed to write file "%s".', $filename), 0, null, $filename);
         }
+
+        @chmod($tmpFile, file_exists($filename) ? fileperms($filename) : 0666 & ~umask());
+
+        $this->rename($tmpFile, $filename, true);
     }
 
     /**
      * Appends content to an existing file.
      *
      * @param string|resource $content The content to append
-     * @param bool            $lock    Whether the file should be locked when writing to it
      *
      * @throws IOException If the file is not writable
      */
-    public function appendToFile(string $filename, $content, bool $lock = false): void
+    public function appendToFile(string $filename, $content)
     {
         if (\is_array($content)) {
-            throw new \TypeError(\sprintf('Argument 2 passed to "%s()" must be string or resource, array given.', __METHOD__));
+            throw new \TypeError(sprintf('Argument 2 passed to "%s()" must be string or resource, array given.', __METHOD__));
         }
 
         $dir = \dirname($filename);
@@ -704,33 +685,18 @@ class Filesystem
             $this->mkdir($dir);
         }
 
-        if (false === self::box('file_put_contents', $filename, $content, \FILE_APPEND | ($lock ? \LOCK_EX : 0))) {
-            throw new IOException(\sprintf('Failed to write file "%s": ', $filename).self::$lastError, 0, null, $filename);
+        if (!is_writable($dir)) {
+            throw new IOException(sprintf('Unable to write to the "%s" directory.', $dir), 0, null, $dir);
+        }
+
+        if (false === @file_put_contents($filename, $content, FILE_APPEND)) {
+            throw new IOException(sprintf('Failed to write file "%s".', $filename), 0, null, $filename);
         }
     }
 
-    /**
-     * Returns the content of a file as a string.
-     *
-     * @throws IOException If the file cannot be read
-     */
-    public function readFile(string $filename): string
+    private function toIterable($files): iterable
     {
-        if (is_dir($filename)) {
-            throw new IOException(\sprintf('Failed to read file "%s": File is a directory.', $filename));
-        }
-
-        $content = self::box('file_get_contents', $filename);
-        if (false === $content) {
-            throw new IOException(\sprintf('Failed to read file "%s": ', $filename).self::$lastError, 0, null, $filename);
-        }
-
-        return $content;
-    }
-
-    private function toIterable(string|iterable $files): iterable
-    {
-        return is_iterable($files) ? $files : [$files];
+        return \is_array($files) || $files instanceof \Traversable ? $files : [$files];
     }
 
     /**
@@ -743,30 +709,29 @@ class Filesystem
         return 2 === \count($components) ? [$components[0], $components[1]] : [null, $components[0]];
     }
 
-    private static function assertFunctionExists(string $func): void
+    /**
+     * @return mixed
+     */
+    private static function box(callable $func)
     {
-        if (!\function_exists($func)) {
-            throw new IOException(\sprintf('Unable to perform filesystem operation because the "%s()" function has been disabled.', $func));
-        }
-    }
-
-    private static function box(string $func, mixed ...$args): mixed
-    {
-        self::assertFunctionExists($func);
-
         self::$lastError = null;
-        set_error_handler(self::handleError(...));
+        set_error_handler(__CLASS__.'::handleError');
         try {
-            return $func(...$args);
-        } finally {
+            $result = $func(...\array_slice(\func_get_args(), 1));
             restore_error_handler();
+
+            return $result;
+        } catch (\Throwable $e) {
         }
+        restore_error_handler();
+
+        throw $e;
     }
 
     /**
      * @internal
      */
-    public static function handleError(int $type, string $msg): void
+    public static function handleError($type, $msg)
     {
         self::$lastError = $msg;
     }

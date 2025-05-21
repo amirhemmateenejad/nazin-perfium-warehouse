@@ -5,36 +5,13 @@ namespace Illuminate\Support\Testing\Fakes;
 use BadMethodCallException;
 use Closure;
 use Illuminate\Contracts\Queue\Queue;
-use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Queue\QueueManager;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Traits\ReflectsClosures;
 use PHPUnit\Framework\Assert as PHPUnit;
 
-class QueueFake extends QueueManager implements Fake, Queue
+class QueueFake extends QueueManager implements Queue
 {
     use ReflectsClosures;
-
-    /**
-     * The original queue manager.
-     *
-     * @var \Illuminate\Contracts\Queue\Queue
-     */
-    public $queue;
-
-    /**
-     * The job types that should be intercepted instead of pushed to the queue.
-     *
-     * @var \Illuminate\Support\Collection
-     */
-    protected $jobsToFake;
-
-    /**
-     * The job types that should be pushed to the queue and not intercepted.
-     *
-     * @var \Illuminate\Support\Collection
-     */
-    protected $jobsToBeQueued;
 
     /**
      * All of the jobs that have been pushed.
@@ -42,43 +19,6 @@ class QueueFake extends QueueManager implements Fake, Queue
      * @var array
      */
     protected $jobs = [];
-
-    /**
-     * Indicates if items should be serialized and restored when pushed to the queue.
-     *
-     * @var bool
-     */
-    protected bool $serializeAndRestore = false;
-
-    /**
-     * Create a new fake queue instance.
-     *
-     * @param  \Illuminate\Contracts\Foundation\Application  $app
-     * @param  array  $jobsToFake
-     * @param  \Illuminate\Queue\QueueManager|null  $queue
-     * @return void
-     */
-    public function __construct($app, $jobsToFake = [], $queue = null)
-    {
-        parent::__construct($app);
-
-        $this->jobsToFake = Collection::wrap($jobsToFake);
-        $this->jobsToBeQueued = new Collection;
-        $this->queue = $queue;
-    }
-
-    /**
-     * Specify the jobs that should be queued instead of faked.
-     *
-     * @param  array|string  $jobsToBeQueued
-     * @return $this
-     */
-    public function except($jobsToBeQueued)
-    {
-        $this->jobsToBeQueued = Collection::wrap($jobsToBeQueued)->merge($this->jobsToBeQueued);
-
-        return $this;
-    }
 
     /**
      * Assert if a job was pushed based on a truth-test callback.
@@ -134,7 +74,7 @@ class QueueFake extends QueueManager implements Fake, Queue
             [$job, $callback] = [$this->firstClosureParameterType($job), $job];
         }
 
-        $this->assertPushed($job, function ($job, $pushedQueue) use ($callback, $queue) {
+        return $this->assertPushed($job, function ($job, $pushedQueue) use ($callback, $queue) {
             if ($pushedQueue !== $queue) {
                 return false;
             }
@@ -159,7 +99,7 @@ class QueueFake extends QueueManager implements Fake, Queue
         );
 
         PHPUnit::assertTrue(
-            (new Collection($expectedChain))->isNotEmpty(),
+            collect($expectedChain)->isNotEmpty(),
             'The expected chain can not be empty.'
         );
 
@@ -195,10 +135,14 @@ class QueueFake extends QueueManager implements Fake, Queue
      */
     protected function assertPushedWithChainOfObjects($job, $expectedChain, $callback)
     {
-        $chain = (new Collection($expectedChain))->map(fn ($job) => serialize($job))->all();
+        $chain = collect($expectedChain)->map(function ($job) {
+            return serialize($job);
+        })->all();
 
         PHPUnit::assertTrue(
-            $this->pushed($job, $callback)->filter(fn ($job) => $job->chained == $chain)->isNotEmpty(),
+            $this->pushed($job, $callback)->filter(function ($job) use ($chain) {
+                return $job->chained == $chain;
+            })->isNotEmpty(),
             'The expected chain was not pushed.'
         );
     }
@@ -214,7 +158,7 @@ class QueueFake extends QueueManager implements Fake, Queue
     protected function assertPushedWithChainOfClasses($job, $expectedChain, $callback)
     {
         $matching = $this->pushed($job, $callback)->map->chained->map(function ($chain) {
-            return (new Collection($chain))->map(function ($job) {
+            return collect($chain)->map(function ($job) {
                 return get_class(unserialize($job));
             });
         })->filter(function ($chain) use ($expectedChain) {
@@ -227,28 +171,6 @@ class QueueFake extends QueueManager implements Fake, Queue
     }
 
     /**
-     * Assert if a closure was pushed based on a truth-test callback.
-     *
-     * @param  callable|int|null  $callback
-     * @return void
-     */
-    public function assertClosurePushed($callback = null)
-    {
-        $this->assertPushed(CallQueuedClosure::class, $callback);
-    }
-
-    /**
-     * Assert that a closure was not pushed based on a truth-test callback.
-     *
-     * @param  callable|null  $callback
-     * @return void
-     */
-    public function assertClosureNotPushed($callback = null)
-    {
-        $this->assertNotPushed(CallQueuedClosure::class, $callback);
-    }
-
-    /**
      * Determine if the given chain is entirely composed of objects.
      *
      * @param  array  $chain
@@ -256,7 +178,9 @@ class QueueFake extends QueueManager implements Fake, Queue
      */
     protected function isChainOfObjects($chain)
     {
-        return ! (new Collection($chain))->contains(fn ($job) => ! is_object($job));
+        return ! collect($chain)->contains(function ($job) {
+            return ! is_object($job);
+        });
     }
 
     /**
@@ -279,31 +203,13 @@ class QueueFake extends QueueManager implements Fake, Queue
     }
 
     /**
-     * Assert the total count of jobs that were pushed.
-     *
-     * @param  int  $expectedCount
-     * @return void
-     */
-    public function assertCount($expectedCount)
-    {
-        $actualCount = (new Collection($this->jobs))->flatten(1)->count();
-
-        PHPUnit::assertSame(
-            $expectedCount, $actualCount,
-            "Expected {$expectedCount} jobs to be pushed, but found {$actualCount} instead."
-        );
-    }
-
-    /**
      * Assert that no jobs were pushed.
      *
      * @return void
      */
     public function assertNothingPushed()
     {
-        $pushedJobs = implode("\n- ", array_keys($this->jobs));
-
-        PHPUnit::assertEmpty($this->jobs, "The following jobs were pushed unexpectedly:\n\n- $pushedJobs\n");
+        PHPUnit::assertEmpty($this->jobs, 'Jobs were pushed unexpectedly.');
     }
 
     /**
@@ -316,14 +222,16 @@ class QueueFake extends QueueManager implements Fake, Queue
     public function pushed($job, $callback = null)
     {
         if (! $this->hasPushed($job)) {
-            return new Collection;
+            return collect();
         }
 
-        $callback = $callback ?: fn () => true;
+        $callback = $callback ?: function () {
+            return true;
+        };
 
-        return (new Collection($this->jobs[$job]))->filter(
-            fn ($data) => $callback($data['job'], $data['queue'], $data['data'])
-        )->pluck('job');
+        return collect($this->jobs[$job])->filter(function ($data) use ($callback) {
+            return $callback($data['job'], $data['queue']);
+        })->pluck('job');
     }
 
     /**
@@ -356,74 +264,25 @@ class QueueFake extends QueueManager implements Fake, Queue
      */
     public function size($queue = null)
     {
-        return (new Collection($this->jobs))->flatten(1)->filter(
-            fn ($job) => $job['queue'] === $queue
-        )->count();
+        return collect($this->jobs)->flatten(1)->filter(function ($job) use ($queue) {
+            return $job['queue'] === $queue;
+        })->count();
     }
 
     /**
      * Push a new job onto the queue.
      *
-     * @param  string|object  $job
+     * @param  string  $job
      * @param  mixed  $data
      * @param  string|null  $queue
      * @return mixed
      */
     public function push($job, $data = '', $queue = null)
     {
-        if ($this->shouldFakeJob($job)) {
-            if ($job instanceof Closure) {
-                $job = CallQueuedClosure::create($job);
-            }
-
-            $this->jobs[is_object($job) ? get_class($job) : $job][] = [
-                'job' => $this->serializeAndRestore ? $this->serializeAndRestoreJob($job) : $job,
-                'queue' => $queue,
-                'data' => $data,
-            ];
-        } else {
-            is_object($job) && isset($job->connection)
-                ? $this->queue->connection($job->connection)->push($job, $data, $queue)
-                : $this->queue->push($job, $data, $queue);
-        }
-    }
-
-    /**
-     * Determine if a job should be faked or actually dispatched.
-     *
-     * @param  object  $job
-     * @return bool
-     */
-    public function shouldFakeJob($job)
-    {
-        if ($this->shouldDispatchJob($job)) {
-            return false;
-        }
-
-        if ($this->jobsToFake->isEmpty()) {
-            return true;
-        }
-
-        return $this->jobsToFake->contains(
-            fn ($jobToFake) => $job instanceof ((string) $jobToFake) || $job === (string) $jobToFake
-        );
-    }
-
-    /**
-     * Determine if a job should be pushed to the queue instead of faked.
-     *
-     * @param  object  $job
-     * @return bool
-     */
-    protected function shouldDispatchJob($job)
-    {
-        if ($this->jobsToBeQueued->isEmpty()) {
-            return false;
-        }
-
-        return $this->jobsToBeQueued->contains(
-            fn ($jobToQueue) => $job instanceof ((string) $jobToQueue)
-        );
+        $this->jobs[is_object($job) ? get_class($job) : $job][] = [
+            'job' => $job,
+            'queue' => $queue,
+        ];
     }
 
     /**
@@ -440,10 +299,10 @@ class QueueFake extends QueueManager implements Fake, Queue
     }
 
     /**
-     * Push a new job onto the queue after (n) seconds.
+     * Push a new job onto the queue after a delay.
      *
      * @param  \DateTimeInterface|\DateInterval|int  $delay
-     * @param  string|object  $job
+     * @param  string  $job
      * @param  mixed  $data
      * @param  string|null  $queue
      * @return mixed
@@ -457,7 +316,7 @@ class QueueFake extends QueueManager implements Fake, Queue
      * Push a new job onto the queue.
      *
      * @param  string  $queue
-     * @param  string|object  $job
+     * @param  string  $job
      * @param  mixed  $data
      * @return mixed
      */
@@ -467,11 +326,11 @@ class QueueFake extends QueueManager implements Fake, Queue
     }
 
     /**
-     * Push a new job onto a specific queue after (n) seconds.
+     * Push a new job onto the queue after a delay.
      *
      * @param  string  $queue
      * @param  \DateTimeInterface|\DateInterval|int  $delay
-     * @param  string|object  $job
+     * @param  string  $job
      * @param  mixed  $data
      * @return mixed
      */
@@ -514,30 +373,6 @@ class QueueFake extends QueueManager implements Fake, Queue
     public function pushedJobs()
     {
         return $this->jobs;
-    }
-
-    /**
-     * Specify if jobs should be serialized and restored when being "pushed" to the queue.
-     *
-     * @param  bool  $serializeAndRestore
-     * @return $this
-     */
-    public function serializeAndRestore(bool $serializeAndRestore = true)
-    {
-        $this->serializeAndRestore = $serializeAndRestore;
-
-        return $this;
-    }
-
-    /**
-     * Serialize and unserialize the job to simulate the queueing process.
-     *
-     * @param  mixed  $job
-     * @return mixed
-     */
-    protected function serializeAndRestoreJob($job)
-    {
-        return unserialize(serialize($job));
     }
 
     /**

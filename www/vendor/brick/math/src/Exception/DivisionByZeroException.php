@@ -10,6 +10,8 @@ namespace Brick\Math\Exception;
 class DivisionByZeroException extends MathException
 {
     /**
+     * @return DivisionByZeroException
+     *
      * @psalm-pure
      */
     public static function divisionByZero() : DivisionByZeroException
@@ -18,14 +20,8 @@ class DivisionByZeroException extends MathException
     }
 
     /**
-     * @psalm-pure
-     */
-    public static function modulusMustNotBeZero() : DivisionByZeroException
-    {
-        return new self('The modulus must not be zero.');
-    }
-
-    /**
+     * @return DivisionByZeroException
+     *
      * @psalm-pure
      */
     public static function denominatorMustNotBeZero() : DivisionByZeroException

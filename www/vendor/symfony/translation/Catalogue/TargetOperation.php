@@ -25,7 +25,10 @@ use Symfony\Component\Translation\MessageCatalogueInterface;
  */
 class TargetOperation extends AbstractOperation
 {
-    protected function processDomain(string $domain): void
+    /**
+     * {@inheritdoc}
+     */
+    protected function processDomain(string $domain)
     {
         $this->messages[$domain] = [
             'all' => [],
@@ -33,18 +36,6 @@ class TargetOperation extends AbstractOperation
             'obsolete' => [],
         ];
         $intlDomain = $domain.MessageCatalogueInterface::INTL_DOMAIN_SUFFIX;
-
-        foreach ($this->target->getCatalogueMetadata('', $domain) ?? [] as $key => $value) {
-            if (null === $this->result->getCatalogueMetadata($key, $domain)) {
-                $this->result->setCatalogueMetadata($key, $value, $domain);
-            }
-        }
-
-        foreach ($this->target->getCatalogueMetadata('', $intlDomain) ?? [] as $key => $value) {
-            if (null === $this->result->getCatalogueMetadata($key, $intlDomain)) {
-                $this->result->setCatalogueMetadata($key, $value, $intlDomain);
-            }
-        }
 
         // For 'all' messages, the code can't be simplified as ``$this->messages[$domain]['all'] = $target->all($domain);``,
         // because doing so will drop messages like {x: x ∈ source ∧ x ∉ target.all ∧ x ∈ target.fallback}
@@ -58,10 +49,9 @@ class TargetOperation extends AbstractOperation
         foreach ($this->source->all($domain) as $id => $message) {
             if ($this->target->has($id, $domain)) {
                 $this->messages[$domain]['all'][$id] = $message;
-                $d = $this->source->defines($id, $intlDomain) ? $intlDomain : $domain;
-                $this->result->add([$id => $message], $d);
-                if (null !== $keyMetadata = $this->source->getMetadata($id, $d)) {
-                    $this->result->setMetadata($id, $keyMetadata, $d);
+                $this->result->add([$id => $message], $this->target->defines($id, $intlDomain) ? $intlDomain : $domain);
+                if (null !== $keyMetadata = $this->source->getMetadata($id, $domain)) {
+                    $this->result->setMetadata($id, $keyMetadata, $domain);
                 }
             } else {
                 $this->messages[$domain]['obsolete'][$id] = $message;
@@ -72,10 +62,9 @@ class TargetOperation extends AbstractOperation
             if (!$this->source->has($id, $domain)) {
                 $this->messages[$domain]['all'][$id] = $message;
                 $this->messages[$domain]['new'][$id] = $message;
-                $d = $this->target->defines($id, $intlDomain) ? $intlDomain : $domain;
-                $this->result->add([$id => $message], $d);
-                if (null !== $keyMetadata = $this->target->getMetadata($id, $d)) {
-                    $this->result->setMetadata($id, $keyMetadata, $d);
+                $this->result->add([$id => $message], $this->target->defines($id, $intlDomain) ? $intlDomain : $domain);
+                if (null !== $keyMetadata = $this->target->getMetadata($id, $domain)) {
+                    $this->result->setMetadata($id, $keyMetadata, $domain);
                 }
             }
         }

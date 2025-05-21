@@ -3,9 +3,8 @@
 namespace Illuminate\Support;
 
 use Illuminate\Contracts\Support\Htmlable;
-use Stringable;
 
-class HtmlString implements Htmlable, Stringable
+class HtmlString implements Htmlable
 {
     /**
      * The HTML string.
@@ -42,17 +41,7 @@ class HtmlString implements Htmlable, Stringable
      */
     public function isEmpty()
     {
-        return ($this->html ?? '') === '';
-    }
-
-    /**
-     * Determine if the given HTML string is not empty.
-     *
-     * @return bool
-     */
-    public function isNotEmpty()
-    {
-        return ! $this->isEmpty();
+        return $this->html === '';
     }
 
     /**
@@ -62,6 +51,6 @@ class HtmlString implements Htmlable, Stringable
      */
     public function __toString()
     {
-        return $this->toHtml() ?? '';
+        return $this->toHtml();
     }
 }

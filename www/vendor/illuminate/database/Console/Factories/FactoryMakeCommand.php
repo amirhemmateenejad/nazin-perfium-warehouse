@@ -3,12 +3,8 @@
 namespace Illuminate\Database\Console\Factories;
 
 use Illuminate\Console\GeneratorCommand;
-use Illuminate\Support\Str;
-use Illuminate\Support\Stringable;
-use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputOption;
 
-#[AsCommand(name: 'make:factory')]
 class FactoryMakeCommand extends GeneratorCommand
 {
     /**
@@ -63,28 +59,19 @@ class FactoryMakeCommand extends GeneratorCommand
      */
     protected function buildClass($name)
     {
-        $factory = class_basename(Str::ucfirst(str_replace('Factory', '', $name)));
-
         $namespaceModel = $this->option('model')
-                        ? $this->qualifyModel($this->option('model'))
-                        : $this->qualifyModel($this->guessModelName($name));
+                        ? $this->qualifyClass($this->option('model'))
+                        : trim($this->rootNamespace(), '\\').'\\Model';
 
         $model = class_basename($namespaceModel);
 
-        $namespace = $this->getNamespace(
-            Str::replaceFirst($this->rootNamespace(), 'Database\\Factories\\', $this->qualifyClass($this->getNameInput()))
-        );
-
         $replace = [
-            '{{ factoryNamespace }}' => $namespace,
             'NamespacedDummyModel' => $namespaceModel,
             '{{ namespacedModel }}' => $namespaceModel,
             '{{namespacedModel}}' => $namespaceModel,
             'DummyModel' => $model,
             '{{ model }}' => $model,
             '{{model}}' => $model,
-            '{{ factory }}' => $factory,
-            '{{factory}}' => $factory,
         ];
 
         return str_replace(
@@ -100,34 +87,11 @@ class FactoryMakeCommand extends GeneratorCommand
      */
     protected function getPath($name)
     {
-        $name = (new Stringable($name))->replaceFirst($this->rootNamespace(), '')->finish('Factory')->value();
+        $name = str_replace(
+            ['\\', '/'], '', $this->argument('name')
+        );
 
-        return $this->laravel->databasePath().'/factories/'.str_replace('\\', '/', $name).'.php';
-    }
-
-    /**
-     * Guess the model name from the Factory name or return a default model name.
-     *
-     * @param  string  $name
-     * @return string
-     */
-    protected function guessModelName($name)
-    {
-        if (str_ends_with($name, 'Factory')) {
-            $name = substr($name, 0, -7);
-        }
-
-        $modelName = $this->qualifyModel(Str::after($name, $this->rootNamespace()));
-
-        if (class_exists($modelName)) {
-            return $modelName;
-        }
-
-        if (is_dir(app_path('Models/'))) {
-            return $this->rootNamespace().'Models\Model';
-        }
-
-        return $this->rootNamespace().'Model';
+        return $this->laravel->databasePath()."/factories/{$name}.php";
     }
 
     /**

@@ -58,3 +58,11 @@ services:
     volumes:
       - /sessions
       - ${PHP_INI-./config/php/php.ini}:/usr/local/etc/php/conf.d/php-phpmyadmin.ini
+  mailcatcher:
+    build:
+      context: ./bin/mail
+      dockerfile: Dockerfile
+    container_name: docker_test_mailcatcher
+    ports:
+      - 1025:1025
+      - 1080:1080

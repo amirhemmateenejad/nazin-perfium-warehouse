@@ -2,21 +2,12 @@
 
 namespace Illuminate\Database;
 
-use Illuminate\Contracts\Database\Query\Expression;
-use Illuminate\Support\Collection;
+use Illuminate\Database\Query\Expression;
 use Illuminate\Support\Traits\Macroable;
-use RuntimeException;
 
 abstract class Grammar
 {
     use Macroable;
-
-    /**
-     * The connection used for escaping values.
-     *
-     * @var \Illuminate\Database\Connection
-     */
-    protected $connection;
 
     /**
      * The grammar table prefix.
@@ -39,43 +30,26 @@ abstract class Grammar
     /**
      * Wrap a table in keyword identifiers.
      *
-     * @param  \Illuminate\Contracts\Database\Query\Expression|string  $table
+     * @param  \Illuminate\Database\Query\Expression|string  $table
      * @return string
      */
     public function wrapTable($table)
     {
-        if ($this->isExpression($table)) {
-            return $this->getValue($table);
+        if (! $this->isExpression($table)) {
+            return $this->wrap($this->tablePrefix.$table, true);
         }
 
-        // If the table being wrapped has an alias we'll need to separate the pieces
-        // so we can prefix the table and then wrap each of the segments on their
-        // own and then join these both back together using the "as" connector.
-        if (stripos($table, ' as ') !== false) {
-            return $this->wrapAliasedTable($table);
-        }
-
-        // If the table being wrapped has a custom schema name specified, we need to
-        // prefix the last segment as the table name then wrap each segment alone
-        // and eventually join them both back together using the dot connector.
-        if (str_contains($table, '.')) {
-            $table = substr_replace($table, '.'.$this->tablePrefix, strrpos($table, '.'), 1);
-
-            return (new Collection(explode('.', $table)))
-                ->map($this->wrapValue(...))
-                ->implode('.');
-        }
-
-        return $this->wrapValue($this->tablePrefix.$table);
+        return $this->getValue($table);
     }
 
     /**
      * Wrap a value in keyword identifiers.
      *
-     * @param  \Illuminate\Contracts\Database\Query\Expression|string  $value
+     * @param  \Illuminate\Database\Query\Expression|string  $value
+     * @param  bool  $prefixAlias
      * @return string
      */
-    public function wrap($value)
+    public function wrap($value, $prefixAlias = false)
     {
         if ($this->isExpression($value)) {
             return $this->getValue($value);
@@ -85,14 +59,7 @@ abstract class Grammar
         // the pieces so we can wrap each of the segments of the expression on its
         // own, and then join these both back together using the "as" connector.
         if (stripos($value, ' as ') !== false) {
-            return $this->wrapAliasedValue($value);
-        }
-
-        // If the given value is a JSON selector we will wrap it differently than a
-        // traditional value. We will need to split this path and wrap each part
-        // wrapped, etc. Otherwise, we will simply wrap the value as a string.
-        if ($this->isJsonSelector($value)) {
-            return $this->wrapJsonSelector($value);
+            return $this->wrapAliasedValue($value, $prefixAlias);
         }
 
         return $this->wrapSegments(explode('.', $value));
@@ -102,26 +69,21 @@ abstract class Grammar
      * Wrap a value that has an alias.
      *
      * @param  string  $value
+     * @param  bool  $prefixAlias
      * @return string
      */
-    protected function wrapAliasedValue($value)
+    protected function wrapAliasedValue($value, $prefixAlias = false)
     {
         $segments = preg_split('/\s+as\s+/i', $value);
+
+        // If we are wrapping a table we need to prefix the alias with the table prefix
+        // as well in order to generate proper syntax. If this is a column of course
+        // no prefix is necessary. The condition will be true when from wrapTable.
+        if ($prefixAlias) {
+            $segments[1] = $this->tablePrefix.$segments[1];
+        }
 
         return $this->wrap($segments[0]).' as '.$this->wrapValue($segments[1]);
-    }
-
-    /**
-     * Wrap a table that has an alias.
-     *
-     * @param  string  $value
-     * @return string
-     */
-    protected function wrapAliasedTable($value)
-    {
-        $segments = preg_split('/\s+as\s+/i', $value);
-
-        return $this->wrapTable($segments[0]).' as '.$this->wrapValue($this->tablePrefix.$segments[1]);
     }
 
     /**
@@ -132,7 +94,7 @@ abstract class Grammar
      */
     protected function wrapSegments($segments)
     {
-        return (new Collection($segments))->map(function ($segment, $key) use ($segments) {
+        return collect($segments)->map(function ($segment, $key) use ($segments) {
             return $key == 0 && count($segments) > 1
                             ? $this->wrapTable($segment)
                             : $this->wrapValue($segment);
@@ -152,30 +114,6 @@ abstract class Grammar
         }
 
         return $value;
-    }
-
-    /**
-     * Wrap the given JSON selector.
-     *
-     * @param  string  $value
-     * @return string
-     *
-     * @throws \RuntimeException
-     */
-    protected function wrapJsonSelector($value)
-    {
-        throw new RuntimeException('This database engine does not support JSON operations.');
-    }
-
-    /**
-     * Determine if the given string is a JSON selector.
-     *
-     * @param  string  $value
-     * @return bool
-     */
-    protected function isJsonSelector($value)
-    {
-        return str_contains($value, '->');
     }
 
     /**
@@ -227,22 +165,6 @@ abstract class Grammar
     }
 
     /**
-     * Escapes a value for safe SQL embedding.
-     *
-     * @param  string|float|int|bool|null  $value
-     * @param  bool  $binary
-     * @return string
-     */
-    public function escape($value, $binary = false)
-    {
-        if (is_null($this->connection)) {
-            throw new RuntimeException("The database driver's grammar implementation does not support escaping values.");
-        }
-
-        return $this->connection->escape($value, $binary);
-    }
-
-    /**
      * Determine if the given value is a raw expression.
      *
      * @param  mixed  $value
@@ -254,18 +176,14 @@ abstract class Grammar
     }
 
     /**
-     * Transforms expressions to their scalar types.
+     * Get the value of a raw expression.
      *
-     * @param  \Illuminate\Contracts\Database\Query\Expression|string|int|float  $expression
-     * @return string|int|float
+     * @param  \Illuminate\Database\Query\Expression  $expression
+     * @return string
      */
     public function getValue($expression)
     {
-        if ($this->isExpression($expression)) {
-            return $this->getValue($expression->getValue($this));
-        }
-
-        return $expression;
+        return $expression->getValue();
     }
 
     /**
@@ -297,19 +215,6 @@ abstract class Grammar
     public function setTablePrefix($prefix)
     {
         $this->tablePrefix = $prefix;
-
-        return $this;
-    }
-
-    /**
-     * Set the grammar's database connection.
-     *
-     * @param  \Illuminate\Database\Connection  $connection
-     * @return $this
-     */
-    public function setConnection($connection)
-    {
-        $this->connection = $connection;
 
         return $this;
     }

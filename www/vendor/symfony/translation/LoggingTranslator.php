@@ -12,6 +12,7 @@
 namespace Symfony\Component\Translation;
 
 use Psr\Log\LoggerInterface;
+use Symfony\Component\Translation\Exception\InvalidArgumentException;
 use Symfony\Contracts\Translation\LocaleAwareInterface;
 use Symfony\Contracts\Translation\TranslatorInterface;
 
@@ -20,13 +21,30 @@ use Symfony\Contracts\Translation\TranslatorInterface;
  */
 class LoggingTranslator implements TranslatorInterface, TranslatorBagInterface, LocaleAwareInterface
 {
-    public function __construct(
-        private TranslatorInterface&TranslatorBagInterface&LocaleAwareInterface $translator,
-        private LoggerInterface $logger,
-    ) {
+    /**
+     * @var TranslatorInterface|TranslatorBagInterface
+     */
+    private $translator;
+
+    private $logger;
+
+    /**
+     * @param TranslatorInterface $translator The translator must implement TranslatorBagInterface
+     */
+    public function __construct(TranslatorInterface $translator, LoggerInterface $logger)
+    {
+        if (!$translator instanceof TranslatorBagInterface || !$translator instanceof LocaleAwareInterface) {
+            throw new InvalidArgumentException(sprintf('The Translator "%s" must implement TranslatorInterface, TranslatorBagInterface and LocaleAwareInterface.', \get_class($translator)));
+        }
+
+        $this->translator = $translator;
+        $this->logger = $logger;
     }
 
-    public function trans(?string $id, array $parameters = [], ?string $domain = null, ?string $locale = null): string
+    /**
+     * {@inheritdoc}
+     */
+    public function trans(?string $id, array $parameters = [], string $domain = null, string $locale = null)
     {
         $trans = $this->translator->trans($id = (string) $id, $parameters, $domain, $locale);
         $this->log($id, $domain, $locale);
@@ -34,7 +52,10 @@ class LoggingTranslator implements TranslatorInterface, TranslatorBagInterface, 
         return $trans;
     }
 
-    public function setLocale(string $locale): void
+    /**
+     * {@inheritdoc}
+     */
+    public function setLocale(string $locale)
     {
         $prev = $this->translator->getLocale();
         $this->translator->setLocale($locale);
@@ -42,28 +63,31 @@ class LoggingTranslator implements TranslatorInterface, TranslatorBagInterface, 
             return;
         }
 
-        $this->logger->debug(\sprintf('The locale of the translator has changed from "%s" to "%s".', $prev, $locale));
+        $this->logger->debug(sprintf('The locale of the translator has changed from "%s" to "%s".', $prev, $locale));
     }
 
-    public function getLocale(): string
+    /**
+     * {@inheritdoc}
+     */
+    public function getLocale()
     {
         return $this->translator->getLocale();
     }
 
-    public function getCatalogue(?string $locale = null): MessageCatalogueInterface
+    /**
+     * {@inheritdoc}
+     */
+    public function getCatalogue(string $locale = null)
     {
         return $this->translator->getCatalogue($locale);
     }
 
-    public function getCatalogues(): array
-    {
-        return $this->translator->getCatalogues();
-    }
-
     /**
      * Gets the fallback locales.
+     *
+     * @return array The fallback locales
      */
-    public function getFallbackLocales(): array
+    public function getFallbackLocales()
     {
         if ($this->translator instanceof Translator || method_exists($this->translator, 'getFallbackLocales')) {
             return $this->translator->getFallbackLocales();
@@ -72,7 +96,10 @@ class LoggingTranslator implements TranslatorInterface, TranslatorBagInterface, 
         return [];
     }
 
-    public function __call(string $method, array $args): mixed
+    /**
+     * Passes through all unknown calls onto the translator object.
+     */
+    public function __call(string $method, array $args)
     {
         return $this->translator->{$method}(...$args);
     }
@@ -80,9 +107,11 @@ class LoggingTranslator implements TranslatorInterface, TranslatorBagInterface, 
     /**
      * Logs for missing translations.
      */
-    private function log(string $id, ?string $domain, ?string $locale): void
+    private function log(string $id, ?string $domain, ?string $locale)
     {
-        $domain ??= 'messages';
+        if (null === $domain) {
+            $domain = 'messages';
+        }
 
         $catalogue = $this->translator->getCatalogue($locale);
         if ($catalogue->defines($id, $domain)) {
